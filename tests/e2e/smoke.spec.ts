@@ -157,6 +157,12 @@ test('[FR-01] 矢印キーで狙いが動き、Space で果物が落ちる', asy
   for (let i = 0; i < 5; i += 1) {
     await page.keyboard.press('ArrowLeft');
   }
+  /*
+   * 狙いの更新は状態だけを変え、canvas への反映は次フレーム（rAF）で行われる。
+   * 押し終わった直後に getImageData すると数フレーム前の絵を測ってしまい、
+   * 移動量が足りずに落ちる（このテストの既知の flake）。反映を待ってから測る。
+   */
+  await page.waitForTimeout(100);
   const moved = await measureFruitBand(page, 30, 100);
   expect(moved.centerX ?? 0).toBeLessThan((before.centerX ?? 0) - 50);
 

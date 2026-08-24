@@ -13,6 +13,7 @@ import { createInput } from './game/input';
 import { createPhysicsWorld } from './game/physics';
 import { createRenderer } from './game/renderer';
 import { drawFruitTier } from './game/spawn';
+import { createHud } from './ui/hud';
 
 const ERROR_MESSAGE_TESTID = 'boot-error';
 
@@ -32,6 +33,32 @@ function requireCanvas(): HTMLCanvasElement {
     throw new Error('game-canvas が見つかりません（index.html の data-testid を確認してください）');
   }
   return el;
+}
+
+/**
+ * HUD（#8）の差し込み先。index.html の `.hud` が無ければ `.app` の先頭に作る。
+ *
+ * canvas と違い、無ければ作れる要素なので起動を止めない（スコアが見えないまま遊べてしまう
+ * 状態を避けるため、欠落時は生成側で補う）。
+ */
+function requireHudMount(canvas: HTMLCanvasElement): HTMLElement {
+  // 契約点 §9: DOM 要素の取得は data-testid で行う
+  const existing = document.querySelector<HTMLElement>('[data-testid="hud"]');
+  if (existing !== null) {
+    return existing;
+  }
+  const mount = document.createElement('section');
+  mount.className = 'hud';
+  mount.dataset.testid = 'hud';
+  mount.setAttribute('aria-label', 'スコア表示');
+  // 盤面の直前（＝盤面の上）に置く。canvas の親が無い異常系だけ body 末尾へ逃がす
+  const parent = canvas.parentNode;
+  if (parent === null) {
+    document.body.appendChild(mount);
+  } else {
+    parent.insertBefore(mount, canvas);
+  }
+  return mount;
 }
 
 /** 起動失敗を画面にも出す。何度呼ばれても表示は 1 つだけにする。 */
@@ -147,6 +174,8 @@ function bootstrap(): void {
     });
 
     observeViewport(canvas, game);
+    // スコア・ハイスコア・次の果物・ミュート（FR-05 / FR-06 / FR-08 / DT-02）
+    createHud({ mount: requireHudMount(canvas), game });
     // 落下操作（FR-01 / FR-10）。ページ全体で遊べるようキー入力は window で受ける
     createInput(canvas, game);
     game.start();

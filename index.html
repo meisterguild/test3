@@ -10,6 +10,12 @@
     <main class="app">
       <h1 class="app__title">スイカゲーム</h1>
       <!--
+        HUD（スコア / ハイスコア / 次の果物 / ミュート）の差し込み先。
+        中身は src/ui/hud.ts が生成する（DOM 構造の二重管理を避けるため、ここには置かない）。
+        契約点 §9 の testid（score / high-score / next-fruit / mute-toggle）も同モジュールが付ける。
+      -->
+      <section class="hud" data-testid="hud" aria-label="スコア表示"></section>
+      <!--
         canvas の属性値は契約点 §5 の論理座標系 480×720（初期値）。
         起動後は src/game/renderer.ts が「CSS 表示サイズ × devicePixelRatio」の
         実解像度へ書き換える（R-04）。ここの値は初回描画までの暫定サイズとしてのみ効く。
