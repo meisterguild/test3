@@ -48,12 +48,87 @@ body {
   letter-spacing: 0.05em;
 }
 
+/*
+ * HUD（T-07 / UI-01）。中身は src/ui/hud.ts が生成する。
+ * 盤面の横幅（論理 480px）を超えないよう canvas と同じ上限で揃える。
+ * 狭い画面向けの最適化（UI-03 / R-04）は T-10 で行う。
+ */
+.hud {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px 16px;
+  width: 100%;
+  max-width: 480px;
+}
+
+.hud__field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 72px;
+}
+
+.hud__label {
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  opacity: 0.75;
+}
+
+.hud__value {
+  font-size: 1.1rem;
+  font-weight: 700;
+  /* 桁が変わっても表示幅が揺れないようにする */
+  font-variant-numeric: tabular-nums;
+}
+
+.hud__field--next {
+  /* 次の果物だけは色見本と名前を横並びにする */
+  min-width: 96px;
+}
+
+.hud__field--next .hud__value {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.95rem;
+}
+
+.hud__swatch {
+  display: inline-block;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  /* 果物色が背景に沈まないよう縁を付ける */
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 35%);
+}
+
+.hud__mute {
+  margin-inline-start: auto;
+  padding: 6px 12px;
+  color: inherit;
+  font: inherit;
+  font-size: 0.85rem;
+  background: rgb(255 255 255 / 10%);
+  border: 1px solid rgb(255 255 255 / 25%);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.hud__mute[aria-pressed='true'] {
+  background: rgb(255 255 255 / 4%);
+  opacity: 0.7;
+}
+
 .app__canvas {
   display: block;
   width: auto;
   height: auto;
   max-width: 100%;
-  max-height: calc(100vh - 96px);
+  /* タイトル + HUD + 余白の分を差し引く（HUD 追加で 96px では収まらなくなった。精緻化は T-10） */
+  max-height: calc(100vh - 152px);
   aspect-ratio: var(--stage-aspect);
   background: var(--color-surface);
   border-radius: 12px;
