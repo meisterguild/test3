@@ -5,30 +5,16 @@
  *
  * 本ファイルは読み込み時に `bootstrap()` を実行する副作用モジュールなので、内部関数は export しない
  * （import した時点で起動してしまうため単体テストには向かない）。テスト対象は `src/game/**` 側に置く。
- *
- * 入力（クリック / ドラッグでのドロップ）は #6 の担当。本 issue では挙動確認用に
- * **固定位置へ自動でドロップする暫定コード**（`startDebugAutoDrop`）を置いており、#6 で入力へ置き換える。
  */
 
-import { CONTAINER_LEFT, CONTAINER_RIGHT, DROP_COOLDOWN_MS } from './game/constants';
+import { CONTAINER_LEFT, CONTAINER_RIGHT } from './game/constants';
 import { createGame, type GameController } from './game/game';
+import { createInput } from './game/input';
 import { createPhysicsWorld } from './game/physics';
 import { createRenderer } from './game/renderer';
 import { drawFruitTier } from './game/spawn';
 
 const ERROR_MESSAGE_TESTID = 'boot-error';
-
-/** 暫定オートドロップの間隔。入力のクールダウン（FR-10）と同じ間隔にして体感を近づける */
-const DEBUG_DROP_INTERVAL_MS = DROP_COOLDOWN_MS;
-
-/** 暫定オートドロップの落下位置（論理座標 x）。容器の内側を巡回する */
-const DEBUG_DROP_XS = [240, 160, 320, 200, 280] as const;
-
-/**
- * 暫定オートドロップで積む上限。合体（#7）がまだ無く果物が減らないため、
- * 放置しても際限なく増えないよう NFR-01 の基準個数で止める。
- */
-const DEBUG_DROP_MAX = 60;
 
 /** デバッグ計測表示の testid（契約点 §9: DOM の取得は data-testid で行う） */
 const DEBUG_STATS_TESTID = 'debug-stats';
@@ -126,31 +112,8 @@ function startStressFill(game: GameController, count: number): void {
 }
 
 /**
- * 暫定のオートドロップ（#6 の入力実装で削除する）。
- *
- * 物理・描画・ループが繋がっていること（FR-02）を入力なしで目視確認するための足場。
- * 固定位置を巡回しながら {@link DEBUG_DROP_MAX} 個まで落とす。
- */
-function startDebugAutoDrop(game: GameController): void {
-  let index = 0;
-  const timer = window.setInterval(() => {
-    if (game.status !== 'playing') {
-      return;
-    }
-    if (index >= DEBUG_DROP_MAX) {
-      window.clearInterval(timer);
-      return;
-    }
-    const x = DEBUG_DROP_XS[index % DEBUG_DROP_XS.length] ?? CONTAINER_LEFT;
-    index += 1;
-    game.dropAt(x);
-  }, DEBUG_DROP_INTERVAL_MS);
-}
-
-/**
  * URL のクエリパラメータでデバッグ用の足場を有効化する。
  *
- * - `?autodrop=0` … 暫定オートドロップを止める（既定は有効）
  * - `?stress=<個数>` … 指定個数を連続投入する（計測表示も自動で有効化）
  * - `?fps=1` … 実測 fps / 果物数 / sleeping 数を表示する
  */
@@ -163,9 +126,6 @@ function startDebugTools(game: GameController): void {
   }
   if (params.get('stress') !== null || params.get('fps') === '1') {
     startDebugStats(game);
-  }
-  if (params.get('autodrop') !== '0') {
-    startDebugAutoDrop(game);
   }
 }
 
@@ -183,10 +143,12 @@ function bootstrap(): void {
     const game = createGame({
       physics: createPhysicsWorld(),
       renderer: createRenderer(canvas),
-      nextTier: drawFruitTier,
+      drawTier: drawFruitTier,
     });
 
     observeViewport(canvas, game);
+    // 落下操作（FR-01 / FR-10）。ページ全体で遊べるようキー入力は window で受ける
+    createInput(canvas, game);
     game.start();
     startDebugTools(game);
   } catch (error) {
