@@ -1,0 +1,17 @@
+# 生成物
+node_modules/
+dist/
+test-results/
+playwright-report/
+
+# ペイロード層（プロジェクトへコピーされる資産）は整形対象にしない。
+# 整形差分でコピー先との一致が崩れるのを避ける。
+template/
+
+# メタ層のドキュメント・運用資材（整形すると差分が読みにくくなる）
+*.md
+docs/
+.claude/
+.local/
+.auto-pr-loop/
+.auto-pr-loop.yml

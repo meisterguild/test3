@@ -257,6 +257,67 @@ AIは以下のドキュメントを生成・更新します。
 
 ---
 
+## このリポジトリで開発しているアプリ（スイカゲーム）
+
+このリポジトリのルート直下（`template/` の外＝**メタ層**）では、テンプレート運用の検証を兼ねてスイカゲームを開発しています。**プロジェクトへはコピーされません**（コピー対象は `template/` 配下のみ）。
+
+- 仕様・計画のドキュメント: `docs/`（`docs/internal/architecture/suika-game-structure.md` が実装の契約点）
+- 技術スタック: Vite + TypeScript（`strict`）/ Matter.js / Vitest / Playwright
+
+### セットアップ
+
+```bash
+# 依存のインストール（Node.js 22 以上）
+npm install
+
+# E2E を実行する場合のみ、初回にブラウザを取得する
+npx playwright install --with-deps chromium
+```
+
+### npm scripts
+
+| コマンド | 内容 |
+| ------------------- | ------------------------------------------------------------------- |
+| `npm run dev` | 開発サーバを起動（http://localhost:5173） |
+| `npm run build` | 型チェック（`tsc --noEmit`）＋本番ビルド（`dist/` を生成） |
+| `npm run preview` | ビルド成果物をローカルで配信 |
+| `npm test` | 単体テスト（Vitest / `tests/unit/**/*.test.ts`） |
+| `npm run test:watch` | 単体テストの watch 実行 |
+| `npm run test:e2e` | E2E テスト（Playwright / `tests/e2e/**/*.spec.ts`。build → preview を自動起動） |
+| `npm run lint` | ESLint（`template/` 配下は対象外） |
+| `npm run format` | Prettier で整形（`template/` 配下・Markdown は対象外） |
+
+単体テストの既定環境は `node` です。DOM が必要なテストだけ、ファイル先頭に `// @vitest-environment jsdom` を書いて切り替えます。
+
+### アプリのファイル構成（メタ層・コピーしない）
+
+```text
+000-ai-template/
+├── index.html                  # エントリ HTML（canvas を配置）
+├── package.json
+├── tsconfig.json
+├── vite.config.ts              # Vite + Vitest 設定
+├── playwright.config.ts        # E2E 設定（webServer = build → preview）
+├── eslint.config.js            # ESLint flat config
+├── .prettierrc.json / .prettierignore
+├── public/sounds/              # 効果音の置き場
+├── src/
+│   ├── main.ts                 # エントリポイント
+│   ├── style.css
+│   ├── game/                   # ルール・物理・描画・ゲームループ
+│   ├── ui/                     # HUD・モーダル
+│   ├── storage/                # localStorage の隠蔽
+│   └── audio/                  # 効果音
+└── tests/
+    ├── unit/                   # Vitest
+    ├── e2e/                    # Playwright
+    └── test_review_runner_diff_range.py  # テンプレート層 hook の回帰テスト（別系統）
+```
+
+> ※ `tests/` は Python の hook 回帰テスト（メタ層の保守用）とアプリのテストが同居します。実行系は別で、Python 側は `python3 -m unittest discover -s tests`、アプリ側は `npm test` / `npm run test:e2e` です（Vitest / Playwright の対象は `tests/unit` / `tests/e2e` に限定してあります）。
+
+---
+
 ## エコシステム内での立ち位置
 
 このテンプレートは、社内のAI開発資材のうち、新規プロジェクトの立ち上げ（要件定義〜外部設計が主対象。設計後に開発を続ける場合のフェーズ承認付き実装フローも同梱）を担当します。

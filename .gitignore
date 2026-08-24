@@ -13,3 +13,16 @@ template/.claude/last-review.*
 
 # Python バイトコードキャッシュ
 __pycache__/
+
+# --- このリポジトリで開発するスイカゲーム（メタ層のアプリ）の生成物 -----------
+# 依存とビルド成果物
+node_modules/
+dist/
+
+# Playwright の実行結果・レポート
+test-results/
+playwright-report/
+.playwright-cache/
+
+# Vite のローカルキャッシュ
+.vite/

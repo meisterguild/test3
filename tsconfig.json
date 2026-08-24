@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    /* 契約点 §1: strict / ES2022 / moduleResolution bundler */
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "useDefineForClassFields": true,
+    "resolveJsonModule": true,
+
+    /* strict の上乗せ。実装 issue 側で暗黙の any / 未使用値を持ち込ませない */
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+
+    /*
+     * vite.config.ts / playwright.config.ts が Node のグローバル（process 等）を使うため
+     * node 型も読み込む。ブラウザ側コード（src/**）への漏れは ESLint の
+     * no-restricted-globals（eslint.config.js）で禁止して塞ぐ。
+     */
+    "types": ["vite/client", "node"]
+  },
+  "include": ["src", "tests", "vite.config.ts", "playwright.config.ts"]
+}
