@@ -24,6 +24,7 @@ import {
   MAX_PHYSICS_STEPS_PER_FRAME,
   PHYSICS_TIMESTEP_MS,
   RESTITUTION,
+  SPAWN_ACTIVE_CONTACT_STEPS,
   WALL_FRICTION,
   WALL_THICKNESS,
   WALL_TOP_Y,
@@ -58,7 +59,13 @@ export interface FruitSnapshot {
   isSleeping: boolean;
 }
 
-/** 衝突した果物 2 個の組（合体判定に必要な情報だけを渡す）。#7 が購読する */
+/**
+ * 衝突した果物 2 個の組（合体判定に必要な情報だけを渡す）。合体解決（game.ts）が購読する。
+ *
+ * 通知の元になるのは接触開始（`collisionStart`）と、**生成直後の果物**に限った接触継続
+ * （`collisionActive`。R-05 対策）の 2 経路。そのため同じ組が 1 フレームに複数回届きうる。
+ * 重複の吸収は購読側の畳み込み（`resolveMergeBatch`。R-D の `consumed`）が担う。
+ */
 export interface FruitContact {
   a: FruitSnapshot;
   b: FruitSnapshot;
@@ -164,12 +171,25 @@ export function createPhysicsWorld(): PhysicsWorld {
 
   const fruits = new Map<number, FruitBody>();
   const contactHandlers = new Set<(contact: FruitContact) => void>();
+  /**
+   * 生成直後の果物の `fruitId` → 接触継続も通知する残りステップ数（R-05）。
+   * `step` のたびに減らし、0 になったら外す。
+   */
+  const spawnGrace = new Map<number, number>();
   let nextFruitId = 1;
   /** 固定ステップに満たなかった時間の持ち越し (ms) */
   let carryOverMs = 0;
   let disposed = false;
 
-  const handleCollisionStart = (event: IEventCollision<MatterEngine>): void => {
+  /**
+   * 衝突ペア列から果物どうしの組だけを拾って通知する。
+   *
+   * @param includePair 通知対象を絞る述語（接触開始は全件、接触継続は生成直後の果物を含む組だけ）
+   */
+  const notifyContacts = (
+    event: IEventCollision<MatterEngine>,
+    includePair: (a: FruitBody, b: FruitBody) => boolean,
+  ): void => {
     if (contactHandlers.size === 0) {
       return;
     }
@@ -178,8 +198,11 @@ export function createPhysicsWorld(): PhysicsWorld {
       if (!isFruitBody(pair.bodyA) || !isFruitBody(pair.bodyB)) {
         continue;
       }
+      if (!includePair(pair.bodyA, pair.bodyB)) {
+        continue;
+      }
       /*
-       * 購読側（#7）が同じフレーム内で片方を削除しうるため、
+       * 購読側が同じフレーム内で片方を削除しうるため、
        * ハンドラ呼び出し前にスナップショット（値）へ変換して渡す。
        */
       const contact: FruitContact = { a: toSnapshot(pair.bodyA), b: toSnapshot(pair.bodyB) };
@@ -189,7 +212,34 @@ export function createPhysicsWorld(): PhysicsWorld {
     }
   };
 
+  const handleCollisionStart = (event: IEventCollision<MatterEngine>): void => {
+    notifyContacts(event, () => true);
+  };
+
+  /**
+   * 生成直後の果物を含む接触継続だけを通知する（R-05）。
+   * 合体で生まれた果物が既存の果物と重なって出現したケースを取りこぼさないための保険。
+   */
+  const handleCollisionActive = (event: IEventCollision<MatterEngine>): void => {
+    if (spawnGrace.size === 0) {
+      return;
+    }
+    notifyContacts(event, (a, b) => spawnGrace.has(a.fruitId) || spawnGrace.has(b.fruitId));
+  };
+
   Events.on(engine, 'collisionStart', handleCollisionStart);
+  Events.on(engine, 'collisionActive', handleCollisionActive);
+
+  /** 生成直後の猶予ステップを 1 つ消費する（`Engine.update` 1 回ごとに呼ぶ） */
+  const consumeSpawnGrace = (): void => {
+    for (const [fruitId, remaining] of spawnGrace) {
+      if (remaining <= 1) {
+        spawnGrace.delete(fruitId);
+      } else {
+        spawnGrace.set(fruitId, remaining - 1);
+      }
+    }
+  };
 
   const assertUsable = (): void => {
     if (disposed) {
@@ -216,6 +266,7 @@ export function createPhysicsWorld(): PhysicsWorld {
 
       const fruit: FruitBody = Object.assign(body, { fruitId: nextFruitId++, tier });
       fruits.set(fruit.fruitId, fruit);
+      spawnGrace.set(fruit.fruitId, SPAWN_ACTIVE_CONTACT_STEPS);
       Composite.add(engine.world, fruit);
 
       /*
@@ -239,6 +290,7 @@ export function createPhysicsWorld(): PhysicsWorld {
         return;
       }
       fruits.delete(fruitId);
+      spawnGrace.delete(fruitId);
       Composite.remove(engine.world, fruit);
     },
 
@@ -263,6 +315,7 @@ export function createPhysicsWorld(): PhysicsWorld {
       let steps = 0;
       while (carryOverMs >= PHYSICS_TIMESTEP_MS && steps < MAX_PHYSICS_STEPS_PER_FRAME) {
         Engine.update(engine, PHYSICS_TIMESTEP_MS);
+        consumeSpawnGrace();
         carryOverMs -= PHYSICS_TIMESTEP_MS;
         steps += 1;
       }
@@ -284,6 +337,7 @@ export function createPhysicsWorld(): PhysicsWorld {
         Composite.remove(engine.world, fruit);
       }
       fruits.clear();
+      spawnGrace.clear();
       carryOverMs = 0;
     },
 
@@ -293,8 +347,10 @@ export function createPhysicsWorld(): PhysicsWorld {
       }
       disposed = true;
       Events.off(engine, 'collisionStart', handleCollisionStart);
+      Events.off(engine, 'collisionActive', handleCollisionActive);
       contactHandlers.clear();
       fruits.clear();
+      spawnGrace.clear();
       Engine.clear(engine);
       Composite.clear(engine.world, false, true);
     },
