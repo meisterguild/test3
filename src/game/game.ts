@@ -3,14 +3,23 @@
  *
  * 契約点: docs/internal/architecture/suika-game-structure.md §7（イベント名・payload・API 形）
  *
- * 本 issue（#5）で発火するのは `statuschange` / `drop` / `scorechange`。
+ * 発火するのは `statuschange` / `drop` / `scorechange`。
  * `merge` は #7、`gameover` は #9 が本モジュールの `emit` 経路に繋ぐ（イベント定義は先に確定させる）。
  *
  * 依存（物理・描画・時間・フレーム要求）はすべて引数で注入する。DOM や rAF を掴まないため、
  * 単体テストでは偽のフレーム駆動で決定論的に検証できる（NFR-05）。
+ *
+ * 落下位置の狙い（`aimX`）と先読みキュー（`currentTier` / `nextTier`）も本モジュールが保持する
+ * （docs/specs/game-core-rules.md R-F）。入力デバイスの解釈は input.ts の責務。
  */
 
-import { CONTAINER_LEFT, CONTAINER_RIGHT, DROP_Y, FPS_SAMPLE_WINDOW_MS } from './constants';
+import {
+  CONTAINER_LEFT,
+  CONTAINER_RIGHT,
+  DROP_Y,
+  FPS_SAMPLE_WINDOW_MS,
+  STAGE_WIDTH,
+} from './constants';
 import { FRUITS } from './fruits';
 import type { FruitContact, FruitSnapshot, PhysicsWorld, Unsubscribe } from './physics';
 import type { Renderer } from './renderer';
@@ -41,15 +50,30 @@ export interface Game {
  * 契約点の `Game` を細らせないため、契約外の操作はこちら側に置く
  * （HUD / 効果音のように「購読するだけ」のモジュールは `Game` だけを受け取れば済む）。
  *
- * - `dropAt` … 入力（#6）が呼ぶ
+ * - `aimAt` / `drop` / `dropAt` … 入力（input.ts）が呼ぶ
+ * - `currentTier` / `nextTier` / `aimX` … HUD（#8）と描画が読む
  * - `addScore` … 合体（#7）が加点する
  * - `onFruitContact` / `emit` … 合体（#7）・ゲームオーバー（#9）が物理側の事象を拾って結果を通知する
  */
 export interface GameController extends Game {
   /**
-   * 指定 x（論理座標）に果物を落とす。落とせたら `true`。
+   * 落下位置の狙いを更新する（論理座標 x）。容器の内側（± 現在の果物の半径）へクランプする。
    *
-   * `status !== 'playing'` のときは何もしない。x は容器内へクランプする（#6 のクールダウンは入力側の責務）。
+   * `status !== 'playing'` のとき・有限でない値のときは何もしない。
+   */
+  aimAt(x: number): void;
+  /**
+   * 現在の狙い位置（{@link GameController.aimX}）へ {@link GameController.currentTier} を落とす。
+   * 落とせたら `true`。クールダウン（FR-10）は入力側（input.ts）の責務。
+   */
+  drop(): boolean;
+  /**
+   * 指定 x（論理座標）に果物を落とす。落とせたら `true`。狙いもその位置へ移動する。
+   *
+   * `status !== 'playing'` のときは何もしない。x は容器内へクランプする。
+   *
+   * @param tier 落とす果物を明示する（デバッグ・計測用）。省略時は先読みキューの `current` を使い、
+   *   キューを 1 つ繰り上げる（R-F: 抽選はドロップ成立時のみ）。明示した場合はキューを消費しない。
    */
   dropAt(x: number, tier?: FruitTier): boolean;
   /** スコアを加算する。変化したら `scorechange` を発火する */
@@ -76,6 +100,12 @@ export interface GameController extends Game {
   resize(): boolean;
   /** 現在の状態を 1 枚描き直す（ループが止まっているときの再描画用） */
   redraw(): void;
+  /** 現在の狙い位置（論理座標 x）。ドロップ待機中の果物の中心 x */
+  readonly aimX: number;
+  /** ドロップ待機中の果物の tier（R-F の `current`） */
+  readonly currentTier: FruitTier;
+  /** 次に落ちる果物の tier（R-F の `next`。HUD の予告表示 #8 が読む） */
+  readonly nextTier: FruitTier;
   /** 現在のスコア */
   readonly score: number;
   /**
@@ -90,12 +120,41 @@ export interface GameController extends Game {
 export interface GameDeps {
   physics: PhysicsWorld;
   renderer: Renderer;
-  /** 次に落とす果物の tier を決める（既定は tier 0。抽選の接続は #6） */
-  nextTier?: () => FruitTier;
+  /**
+   * 果物の出現抽選（既定は常に tier 0）。本番は `spawn.drawFruitTier` を渡す。
+   *
+   * 「抽選する関数」と「抽選済みの値」を読み分けられるよう、
+   * 保持している値（{@link GameController.nextTier}）とは別の名前にしている。
+   */
+  drawTier?: () => FruitTier;
   /** 次フレームの要求。既定は `requestAnimationFrame` */
   requestFrame?: (callback: (timestampMs: number) => void) => number;
   /** フレーム要求の取り消し。既定は `cancelAnimationFrame` */
   cancelFrame?: (handle: number) => void;
+}
+
+/** 果物の半径（論理座標 px）。`FruitTier` は 0〜10 に閉じているため既定値には落ちない */
+function radiusOf(tier: FruitTier): number {
+  return FRUITS[tier]?.radius ?? 0;
+}
+
+/**
+ * 落下位置の x を容器の内側へ収める。
+ *
+ * 果物が壁に食い込んだ状態で生成されると弾き出されるため、中心 x を
+ * 「容器の内側 ± 半径」に制限する（狙いの可視化とドロップで同じ範囲を使う）。
+ *
+ * @param radius 落とす果物の半径（論理座標 px）
+ * @returns `CONTAINER_LEFT + radius` 〜 `CONTAINER_RIGHT - radius` の範囲に収めた x。
+ *   半径が容器の内幅の半分を超える（＝収まる位置が無い）場合は容器の中央
+ */
+export function clampDropX(x: number, radius: number): number {
+  const minX = CONTAINER_LEFT + radius;
+  const maxX = CONTAINER_RIGHT - radius;
+  if (maxX < minX) {
+    return (CONTAINER_LEFT + CONTAINER_RIGHT) / 2;
+  }
+  return Math.min(Math.max(x, minX), maxX);
 }
 
 /**
@@ -112,7 +171,7 @@ export interface GameDeps {
  */
 export function createGame(deps: GameDeps): GameController {
   const { physics, renderer } = deps;
-  const nextTier = deps.nextTier ?? ((): FruitTier => 0);
+  const drawTier = deps.drawTier ?? ((): FruitTier => 0);
   const requestFrame =
     deps.requestFrame ??
     ((callback: (timestampMs: number) => void) => requestAnimationFrame(callback));
@@ -129,6 +188,14 @@ export function createGame(deps: GameDeps): GameController {
 
   let status: GameStatus = 'ready';
   let score = 0;
+  /*
+   * 先読みキュー（R-F）。生成時に 2 回抽選し、以降はドロップ成立時にだけ繰り上げる
+   * （クールダウンで弾かれた入力では抽選しない）。
+   */
+  let currentTier = drawTier();
+  let queuedTier = drawTier();
+  /** 落下位置の狙い（論理座標 x）。初期値は容器の中央 */
+  let aimX = clampDropX(STAGE_WIDTH / 2, radiusOf(currentTier));
   /** rAF のハンドル。null ならループは止まっている */
   let frameHandle: number | null = null;
   /** 直前フレームのタイムスタンプ。null なら次フレームを delta 0 として扱う */
@@ -164,7 +231,44 @@ export function createGame(deps: GameDeps): GameController {
   }
 
   function draw(): void {
-    renderer.render({ fruits: physics.snapshot() });
+    /*
+     * ドロップ待機中の果物を DROP_Y に描くことで狙いを可視化する（FR-01）。
+     * ゲームオーバー後は操作できないので消す。
+     */
+    const preview = status === 'over' ? undefined : { tier: currentTier, x: aimX, y: DROP_Y };
+    renderer.render({ fruits: physics.snapshot(), preview });
+  }
+
+  /** 狙いを更新する。容器内へクランプするため、範囲外の値でも状態は壊れない */
+  function setAim(x: number): void {
+    if (!Number.isFinite(x)) {
+      return;
+    }
+    aimX = clampDropX(x, radiusOf(currentTier));
+  }
+
+  /** ドロップ成立時にキューを繰り上げる（R-F）。狙いの再クランプは呼び出し側で行う */
+  function advanceQueue(): void {
+    currentTier = queuedTier;
+    queuedTier = drawTier();
+  }
+
+  function dropAt(x: number, tier?: FruitTier): boolean {
+    assertUsable();
+    if (status !== 'playing') {
+      return false;
+    }
+    const dropTier = tier ?? currentTier;
+    // 壊れた x（NaN 等）でゲームを止めず、現在の狙いのまま落とす
+    const targetX = Number.isFinite(x) ? clampDropX(x, radiusOf(dropTier)) : aimX;
+    physics.addFruit(dropTier, targetX, DROP_Y);
+    if (tier === undefined) {
+      advanceQueue();
+    }
+    // 明示 tier のドロップでも、次の待機果物は落とした位置に置く（狙いの連続性）
+    setAim(targetX);
+    emitEvent('drop', { tier: dropTier });
+    return true;
   }
 
   function tick(timestampMs: number): void {
@@ -274,30 +378,29 @@ export function createGame(deps: GameDeps): GameController {
         score = 0;
         emitEvent('scorechange', { score });
       }
+      // R-F: リスタート時も 2 個を抽選し直す。狙いは中央へ戻す
+      currentTier = drawTier();
+      queuedTier = drawTier();
+      aimX = clampDropX(STAGE_WIDTH / 2, radiusOf(currentTier));
       // ready を経由せず playing へ直行する（プレイヤーの操作なしで再開できる状態にする）
       setStatus('playing');
       renderer.resize();
       scheduleFrame();
     },
 
-    dropAt(x, tier) {
+    aimAt(x) {
       assertUsable();
       if (status !== 'playing') {
-        return false;
+        return;
       }
-      const dropTier = tier ?? nextTier();
-      /*
-       * 果物が壁に食い込んだ状態で生成されると弾き出されるため、
-       * 中心 x を「容器の内側 ± 半径」に収める。
-       */
-      const radius = FRUITS[dropTier]?.radius ?? 0;
-      const minX = CONTAINER_LEFT + radius;
-      const maxX = CONTAINER_RIGHT - radius;
-      const clampedX = Math.min(Math.max(x, minX), Math.max(minX, maxX));
-      physics.addFruit(dropTier, clampedX, DROP_Y);
-      emitEvent('drop', { tier: dropTier });
-      return true;
+      setAim(x);
     },
+
+    drop() {
+      return dropAt(aimX);
+    },
+
+    dropAt,
 
     addScore(delta) {
       assertUsable();
@@ -324,6 +427,18 @@ export function createGame(deps: GameDeps): GameController {
 
     get status() {
       return status;
+    },
+
+    get aimX() {
+      return aimX;
+    },
+
+    get currentTier() {
+      return currentTier;
+    },
+
+    get nextTier() {
+      return queuedTier;
     },
 
     get score() {

@@ -114,7 +114,7 @@ function createFrameDriver() {
   };
 }
 
-function setup(options: { nextTier?: () => FruitTier } = {}) {
+function setup(options: { drawTier?: () => FruitTier } = {}) {
   const physicsStub = createStubPhysics();
   const rendererStub = createStubRenderer();
   const frames = createFrameDriver();
@@ -123,9 +123,19 @@ function setup(options: { nextTier?: () => FruitTier } = {}) {
     renderer: rendererStub.renderer,
     requestFrame: frames.requestFrame,
     cancelFrame: frames.cancelFrame,
-    ...(options.nextTier === undefined ? {} : { nextTier: options.nextTier }),
+    ...(options.drawTier === undefined ? {} : { drawTier: options.drawTier }),
   });
   return { game, physicsStub, rendererStub, frames };
+}
+
+/** 呼ばれた順に tier を返す抽選スタブ（尽きたら最後の値を繰り返す） */
+function drawTierSequence(tiers: readonly FruitTier[]): () => FruitTier {
+  let index = 0;
+  return () => {
+    const tier = tiers[Math.min(index, tiers.length - 1)] ?? 0;
+    index += 1;
+    return tier;
+  };
 }
 
 describe('createGame', () => {
@@ -198,7 +208,7 @@ describe('createGame', () => {
   });
 
   it('[FR-02] dropAt は DROP_Y に果物を追加して drop イベントを発火する', () => {
-    const { game, physicsStub } = setup({ nextTier: () => 3 });
+    const { game, physicsStub } = setup({ drawTier: () => 3 });
     const drops: GameEvents['drop'][] = [];
     game.on('drop', (payload) => drops.push(payload));
 
@@ -210,7 +220,7 @@ describe('createGame', () => {
   });
 
   it('dropAt の x は容器の内側（±半径）へクランプされる', () => {
-    const { game, physicsStub } = setup({ nextTier: () => 2 });
+    const { game, physicsStub } = setup({ drawTier: () => 2 });
     const radius = FRUITS[2]?.radius ?? 0;
     game.start();
 
@@ -231,6 +241,107 @@ describe('createGame', () => {
     game.pause();
     expect(game.dropAt(240)).toBe(false);
     expect(physicsStub.added).toHaveLength(0);
+  });
+
+  it('[FR-08] 生成時に current / next の 2 個を抽選し、ドロップで繰り上げる', () => {
+    const { game } = setup({ drawTier: drawTierSequence([0, 1, 2, 3]) });
+
+    expect(game.currentTier).toBe(0);
+    expect(game.nextTier).toBe(1);
+
+    game.start();
+    game.drop();
+    expect(game.currentTier).toBe(1);
+    expect(game.nextTier).toBe(2);
+
+    game.drop();
+    expect(game.currentTier).toBe(2);
+    expect(game.nextTier).toBe(3);
+  });
+
+  it('[FR-08] tier を明示した dropAt は先読みキューを消費しない', () => {
+    const { game, physicsStub } = setup({ drawTier: drawTierSequence([0, 1, 2]) });
+    game.start();
+
+    game.dropAt(240, 9);
+
+    expect(physicsStub.added).toEqual([{ tier: 9, x: 240, y: DROP_Y }]);
+    expect(game.currentTier).toBe(0);
+    expect(game.nextTier).toBe(1);
+  });
+
+  it('[FR-01] aimAt は狙いを容器の内側（±現在の果物の半径）へクランプする', () => {
+    const { game } = setup({ drawTier: () => 4 });
+    const radius = FRUITS[4]?.radius ?? 0;
+    game.start();
+
+    // 初期値は容器の中央
+    expect(game.aimX).toBe((CONTAINER_LEFT + CONTAINER_RIGHT) / 2);
+
+    game.aimAt(300);
+    expect(game.aimX).toBe(300);
+
+    game.aimAt(-9999);
+    expect(game.aimX).toBe(CONTAINER_LEFT + radius);
+
+    game.aimAt(9999);
+    expect(game.aimX).toBe(CONTAINER_RIGHT - radius);
+
+    // 壊れた値は無視する（直前の狙いを保つ）
+    game.aimAt(Number.NaN);
+    expect(game.aimX).toBe(CONTAINER_RIGHT - radius);
+  });
+
+  it('[FR-01] drop は現在の狙い位置へ current を落とす', () => {
+    const { game, physicsStub } = setup({ drawTier: drawTierSequence([1, 2]) });
+    game.start();
+
+    game.aimAt(180);
+    expect(game.drop()).toBe(true);
+
+    expect(physicsStub.added).toEqual([{ tier: 1, x: 180, y: DROP_Y }]);
+    // 落とした位置に次の果物が待機する
+    expect(game.aimX).toBe(180);
+  });
+
+  it('[FR-01] 繰り上げ後の果物が大きい場合、狙いは新しい半径で再クランプされる', () => {
+    // tier 0（半径 14）→ tier 10（半径 98）。端に寄せた狙いは内側へ戻る
+    const { game } = setup({ drawTier: drawTierSequence([0, 10]) });
+    game.start();
+
+    game.aimAt(9999);
+    expect(game.aimX).toBe(CONTAINER_RIGHT - (FRUITS[0]?.radius ?? 0));
+
+    game.drop();
+    expect(game.currentTier).toBe(10);
+    expect(game.aimX).toBe(CONTAINER_RIGHT - (FRUITS[10]?.radius ?? 0));
+  });
+
+  it('playing 以外では aimAt / drop が何もしない', () => {
+    const { game, physicsStub } = setup();
+    game.aimAt(300);
+    expect(game.aimX).toBe((CONTAINER_LEFT + CONTAINER_RIGHT) / 2);
+    expect(game.drop()).toBe(false);
+
+    game.start();
+    game.pause();
+    game.aimAt(300);
+    expect(game.aimX).toBe((CONTAINER_LEFT + CONTAINER_RIGHT) / 2);
+    expect(game.drop()).toBe(false);
+    expect(physicsStub.added).toHaveLength(0);
+  });
+
+  it('[FR-01] ドロップ待機中の果物を DROP_Y に描画する（ゲームオーバー後は描かない）', () => {
+    const { game, rendererStub, frames } = setup({ drawTier: () => 2 });
+    game.start();
+    game.aimAt(200);
+    frames.runFrame(1000);
+
+    expect(rendererStub.scenes.at(-1)?.preview).toEqual({ tier: 2, x: 200, y: DROP_Y });
+
+    game.emit('gameover', { score: 0, highScore: 0, isNewHighScore: false });
+    game.redraw();
+    expect(rendererStub.scenes.at(-1)?.preview).toBeUndefined();
   });
 
   it('addScore は累計スコアを更新して scorechange を発火する（変化しない加算は発火しない）', () => {
@@ -268,6 +379,19 @@ describe('createGame', () => {
     // リセット後もループが回り続ける
     frames.runFrame(2000);
     expect(frames.pendingCount()).toBe(1);
+  });
+
+  it('[FR-08] restart は先読みキューを引き直し、狙いを中央へ戻す', () => {
+    const { game } = setup({ drawTier: drawTierSequence([0, 1, 2, 3]) });
+    game.start();
+    game.aimAt(150);
+    game.drop();
+
+    game.restart();
+
+    expect(game.currentTier).toBe(3);
+    expect(game.nextTier).toBe(3);
+    expect(game.aimX).toBe((CONTAINER_LEFT + CONTAINER_RIGHT) / 2);
   });
 
   it('gameover の emit は over へ遷移させ、statuschange を先に流してループを止める', () => {
