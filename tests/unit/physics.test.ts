@@ -7,6 +7,7 @@ import {
   DROP_Y,
   PHYSICS_TIMESTEP_MS,
   MAX_PHYSICS_STEPS_PER_FRAME,
+  SPAWN_ACTIVE_CONTACT_STEPS,
 } from '../../src/game/constants';
 import { FRUITS } from '../../src/game/fruits';
 import { createPhysicsWorld, type FruitContact } from '../../src/game/physics';
@@ -126,6 +127,49 @@ describe('createPhysicsWorld', () => {
     world.addFruit(1, 240, CONTAINER_FLOOR_Y - radius * 6);
     advance(world, 2000);
     expect(contacts).toHaveLength(seen);
+    world.dispose();
+  });
+
+  it('[R-05] 既存の果物と重なる位置に追加した果物も接触として通知される', () => {
+    const world = createPhysicsWorld();
+    const contacts: FruitContact[] = [];
+    world.onFruitContact((contact) => contacts.push(contact));
+    const radius = FRUITS[2]?.radius ?? 0;
+
+    // 静止して sleeping に入った果物を用意する（合体漏れが起きやすい状態）
+    world.addFruit(2, 240, CONTAINER_FLOOR_Y - radius);
+    advance(world, 5000);
+    expect(world.snapshot()[0]?.isSleeping).toBe(true);
+    contacts.length = 0;
+
+    // 合体で生まれた果物が既存の果物と重なって出現する状況を再現する
+    world.addFruit(2, 240 + radius, CONTAINER_FLOOR_Y - radius);
+    advance(world, PHYSICS_TIMESTEP_MS * SPAWN_ACTIVE_CONTACT_STEPS);
+
+    expect(contacts.length).toBeGreaterThan(0);
+    expect(contacts.every((contact) => contact.a.tier === 2 && contact.b.tier === 2)).toBe(true);
+    world.dispose();
+  });
+
+  it('[NFR-01] 接触継続の通知は生成直後の窓で打ち切り、毎ステップ積み上げない', () => {
+    const world = createPhysicsWorld();
+    const contacts: FruitContact[] = [];
+    world.onFruitContact((contact) => contacts.push(contact));
+    const radius = FRUITS[2]?.radius ?? 0;
+
+    // 触れ合った状態で置き、猶予窓を使い切らせる
+    world.addFruit(2, 240 - radius, CONTAINER_FLOOR_Y - radius);
+    world.addFruit(2, 240 + radius, CONTAINER_FLOOR_Y - radius);
+    advance(world, PHYSICS_TIMESTEP_MS * SPAWN_ACTIVE_CONTACT_STEPS);
+    const afterGrace = contacts.length;
+
+    /*
+     * 窓が閉じていなければ接触継続がステップ数だけ積み上がる（この区間で 300 件規模になる）。
+     * 桁で差が出るため、余裕を持った上限で「積み上がっていない」ことを押さえる。
+     */
+    const settleSteps = 300;
+    advance(world, PHYSICS_TIMESTEP_MS * settleSteps);
+    expect(contacts.length - afterGrace).toBeLessThan(settleSteps / 10);
     world.dispose();
   });
 

@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { CONTAINER_LEFT, CONTAINER_RIGHT, DROP_Y } from '../../src/game/constants';
-import { FRUITS } from '../../src/game/fruits';
+import { FRUITS, MAX_TIER } from '../../src/game/fruits';
 import { createGame, type GameEvents } from '../../src/game/game';
 import type { FruitContact, FruitSnapshot, PhysicsWorld } from '../../src/game/physics';
 import type { Renderer, Scene } from '../../src/game/renderer';
+import { mergeScore, WATERMELON_ANNIHILATE_SCORE } from '../../src/game/score';
 import type { FruitTier, GameStatus } from '../../src/game/types';
 
 /** 物理世界のスタブ。呼び出しの記録だけを行い、Matter.js には依存しない（NFR-05） */
@@ -16,6 +17,13 @@ function createStubPhysics() {
   let fruits: FruitSnapshot[] = [];
   let clearCount = 0;
   let disposeCount = 0;
+  /** 次の `step` の中で発火させる接触（Matter.js の衝突コールバックの発火位置を再現する） */
+  let contactsDuringStep: FruitContact[] = [];
+  /**
+   * 衝突コールバックを抜けた直後（= まだ `step` の内側）に観測した盤面変更の累計回数。
+   * R-D の「走査中に盤面を変更しない」を検証するために記録する。
+   */
+  const mutationsInsideStep: number[] = [];
 
   const physics: PhysicsWorld = {
     addFruit(tier, x, y) {
@@ -41,6 +49,16 @@ function createStubPhysics() {
     fruitCount: () => fruits.length,
     step(deltaMs) {
       steps.push(deltaMs);
+      const queued = contactsDuringStep;
+      contactsDuringStep = [];
+      for (const contact of queued) {
+        for (const handler of contactHandlers) {
+          handler(contact);
+        }
+      }
+      if (queued.length > 0) {
+        mutationsInsideStep.push(added.length + removed.length);
+      }
       return 1;
     },
     onFruitContact(handler) {
@@ -56,12 +74,30 @@ function createStubPhysics() {
     },
   };
 
+  /** 盤面にいる 2 個から接触ペアを組む（ID の指定ミスはテスト側の誤りとして落とす） */
+  const contactOf = (fruitIdA: number, fruitIdB: number): FruitContact => {
+    const a = fruits.find((fruit) => fruit.fruitId === fruitIdA);
+    const b = fruits.find((fruit) => fruit.fruitId === fruitIdB);
+    if (a === undefined || b === undefined) {
+      throw new Error(`盤面に存在しない fruitId です: ${fruitIdA} / ${fruitIdB}`);
+    }
+    return { a, b };
+  };
+
   return {
     physics,
     added,
     removed,
     steps,
     contactHandlers,
+    contactOf,
+    /** 次の `step` の中で発火させる接触を積む */
+    queueContacts: (...contacts: FruitContact[]): void => {
+      contactsDuringStep.push(...contacts);
+    },
+    mutationsInsideStep,
+    /** 盤面の変更回数（追加 + 削除）。`mutationsInsideStep` との比較に使う */
+    mutationCount: () => added.length + removed.length,
     clearCount: () => clearCount,
     disposeCount: () => disposeCount,
   };
@@ -414,7 +450,7 @@ describe('createGame', () => {
     expect(game.status).toBe('playing');
   });
 
-  it('merge イベントは購読者へそのまま流れる（発火元は #7）', () => {
+  it('merge イベントは emit 経由でも購読者へそのまま流れる', () => {
     const { game } = setup();
     const merges: GameEvents['merge'][] = [];
     game.on('merge', (payload) => merges.push(payload));
@@ -437,7 +473,7 @@ describe('createGame', () => {
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
-  it('onFruitContact は物理側の衝突通知をそのまま中継する（#7 の入口）', () => {
+  it('onFruitContact は物理側の衝突通知をそのまま中継する（#9 の入口）', () => {
     const { game, physicsStub } = setup();
     const handler = vi.fn();
     game.onFruitContact(handler);
@@ -489,5 +525,176 @@ describe('createGame', () => {
     expect(() => game.dropAt(240)).toThrow(/dispose/);
     // dispose は冪等
     expect(() => game.dispose()).not.toThrow();
+  });
+});
+
+/**
+ * 合体の組み込み（FR-03 / FR-04 / R-01。docs/specs/game-core-rules.md R-B / R-D）。
+ *
+ * 判定そのものは merge.test.ts が押さえているので、ここでは
+ * **物理ボディの削除・生成・スコア加算・イベント発火**という game.ts の責務だけを見る。
+ * 接触は物理スタブの `step` の中から発火させ、Matter.js の衝突コールバックの位置を再現する。
+ */
+describe('createGame の合体処理', () => {
+  it('[FR-03] 同 tier の接触で tier+1 が中点に生成され、元の 2 個が消える', () => {
+    const { game, physicsStub, frames } = setup({ drawTier: () => 0 });
+    const merges: GameEvents['merge'][] = [];
+    const scores: GameEvents['scorechange'][] = [];
+    game.on('merge', (payload) => merges.push(payload));
+    game.on('scorechange', (payload) => scores.push(payload));
+
+    game.start();
+    game.dropAt(200);
+    game.dropAt(240);
+    physicsStub.queueContacts(physicsStub.contactOf(1, 2));
+    frames.runFrame(1000);
+
+    expect(physicsStub.removed).toEqual([1, 2]);
+    expect(physicsStub.added.at(-1)).toEqual({ tier: 1, x: 220, y: DROP_Y });
+    expect(merges).toEqual([{ tier: 1, score: mergeScore(1), x: 220, y: DROP_Y }]);
+    // scorechange はフレーム分をまとめて 1 回
+    expect(scores).toEqual([{ score: mergeScore(1) }]);
+    expect(game.score).toBe(mergeScore(1));
+    // 盤面の果物は 2 個 → 1 個に減る
+    expect(game.snapshot()).toHaveLength(1);
+  });
+
+  it('[FR-04] スイカ同士の接触で両方が消え、tier 11 は生成されない', () => {
+    const { game, physicsStub, frames } = setup();
+    const merges: GameEvents['merge'][] = [];
+    game.on('merge', (payload) => merges.push(payload));
+
+    game.start();
+    game.dropAt(200, MAX_TIER);
+    game.dropAt(240, MAX_TIER);
+    physicsStub.queueContacts(physicsStub.contactOf(1, 2));
+    frames.runFrame(1000);
+
+    expect(physicsStub.removed).toEqual([1, 2]);
+    // ドロップした 2 個以降は 1 個も追加されていない
+    expect(physicsStub.added).toHaveLength(2);
+    expect(game.snapshot()).toHaveLength(0);
+    expect(game.score).toBe(WATERMELON_ANNIHILATE_SCORE);
+    expect(merges).toEqual([
+      { tier: MAX_TIER, score: WATERMELON_ANNIHILATE_SCORE, x: 220, y: DROP_Y },
+    ]);
+  });
+
+  it('異 tier の接触では合体せず、スコアも盤面も動かない', () => {
+    const { game, physicsStub, frames } = setup();
+    const merges: GameEvents['merge'][] = [];
+    game.on('merge', (payload) => merges.push(payload));
+
+    game.start();
+    game.dropAt(200, 2);
+    game.dropAt(240, 3);
+    physicsStub.queueContacts(physicsStub.contactOf(1, 2));
+    frames.runFrame(1000);
+
+    expect(physicsStub.removed).toEqual([]);
+    expect(physicsStub.added).toHaveLength(2);
+    expect(merges).toEqual([]);
+    expect(game.score).toBe(0);
+  });
+
+  it('[R-01] 同一フレームに 3 個の同 tier が接触してもスコアが二重計上されない', () => {
+    const { game, physicsStub, frames } = setup({ drawTier: () => 0 });
+    const merges: GameEvents['merge'][] = [];
+    const scores: GameEvents['scorechange'][] = [];
+    game.on('merge', (payload) => merges.push(payload));
+    game.on('scorechange', (payload) => scores.push(payload));
+
+    game.start();
+    game.dropAt(200);
+    game.dropAt(220);
+    game.dropAt(240);
+    // 3 個が同時接触して重複ペアまで届く状況
+    physicsStub.queueContacts(
+      physicsStub.contactOf(1, 2),
+      physicsStub.contactOf(2, 3),
+      physicsStub.contactOf(1, 3),
+      physicsStub.contactOf(1, 2),
+    );
+    frames.runFrame(1000);
+
+    expect(merges).toHaveLength(1);
+    expect(physicsStub.removed).toEqual([1, 2]);
+    expect(game.score).toBe(mergeScore(1));
+    expect(scores).toEqual([{ score: mergeScore(1) }]);
+    // 余った 1 個 + 生成された 1 個
+    expect(game.snapshot().map((fruit) => fruit.tier)).toEqual([0, 1]);
+  });
+
+  it('合体で生成された果物はその後のフレームで通常どおり合体する（連鎖）', () => {
+    const { game, physicsStub, frames } = setup({ drawTier: () => 0 });
+    const merges: GameEvents['merge'][] = [];
+    game.on('merge', (payload) => merges.push(payload));
+
+    game.start();
+    game.dropAt(200);
+    game.dropAt(240);
+    physicsStub.queueContacts(physicsStub.contactOf(1, 2));
+    frames.runFrame(1000);
+
+    // 生成された tier 1（fruitId 3）に、同じ tier 1 を隣接させる
+    game.dropAt(180, 1);
+    physicsStub.queueContacts(physicsStub.contactOf(3, 4));
+    frames.runFrame(1016);
+
+    expect(merges.map((merge) => merge.tier)).toEqual([1, 2]);
+    expect(physicsStub.added.at(-1)).toEqual({ tier: 2, x: 200, y: DROP_Y });
+    expect(game.score).toBe(mergeScore(1) + mergeScore(2));
+    expect(game.snapshot().map((fruit) => fruit.tier)).toEqual([2]);
+  });
+
+  it('[R-01] 盤面の変更は衝突コールバックの外（step 完了後）で行う', () => {
+    const { game, physicsStub, frames } = setup({ drawTier: () => 0 });
+    game.start();
+    game.dropAt(200);
+    game.dropAt(240);
+    const before = physicsStub.mutationCount();
+
+    physicsStub.queueContacts(physicsStub.contactOf(1, 2));
+    frames.runFrame(1000);
+
+    // コールバックを抜けた時点では盤面が変わっていない（Matter.js の走査中に World を触らない）
+    expect(physicsStub.mutationsInsideStep).toEqual([before]);
+    // フレームを抜けたあとに削除 2 件・生成 1 件が適用されている
+    expect(physicsStub.mutationCount()).toBe(before + 3);
+  });
+
+  it('playing 以外のフレームで届いた接触は評価しない（E-13）', () => {
+    const { game, physicsStub, frames } = setup({ drawTier: () => 0 });
+    game.start();
+    game.dropAt(200);
+    game.dropAt(240);
+    const contact = physicsStub.contactOf(1, 2);
+
+    game.pause();
+    for (const handler of physicsStub.contactHandlers) {
+      handler(contact);
+    }
+    game.resume();
+    frames.runFrame(1000);
+
+    expect(physicsStub.removed).toEqual([]);
+    expect(game.score).toBe(0);
+  });
+
+  it('restart は溜まっていた接触を捨てる（消えた果物を指すため）', () => {
+    const { game, physicsStub, frames } = setup({ drawTier: () => 0 });
+    game.start();
+    game.dropAt(200);
+    game.dropAt(240);
+    for (const handler of physicsStub.contactHandlers) {
+      handler(physicsStub.contactOf(1, 2));
+    }
+
+    game.restart();
+    frames.runFrame(1000);
+
+    expect(physicsStub.clearCount()).toBe(1);
+    expect(physicsStub.removed).toEqual([]);
+    expect(game.score).toBe(0);
   });
 });

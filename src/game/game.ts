@@ -3,8 +3,11 @@
  *
  * 契約点: docs/internal/architecture/suika-game-structure.md §7（イベント名・payload・API 形）
  *
- * 発火するのは `statuschange` / `drop` / `scorechange`。
- * `merge` は #7、`gameover` は #9 が本モジュールの `emit` 経路に繋ぐ（イベント定義は先に確定させる）。
+ * 発火するのは `statuschange` / `drop` / `merge` / `scorechange`。
+ * `gameover` は #9 が本モジュールの `emit` 経路に繋ぐ（イベント定義は先に確定させる）。
+ *
+ * 合体（FR-03 / FR-04）は本モジュールがフレーム単位で適用する。判定そのものは merge.ts の
+ * 純関数に委譲し、ここは**接触ペアの収集・物理ボディの削除と生成・スコア加算・イベント発火**だけを行う。
  *
  * 依存（物理・描画・時間・フレーム要求）はすべて引数で注入する。DOM や rAF を掴まないため、
  * 単体テストでは偽のフレーム駆動で決定論的に検証できる（NFR-05）。
@@ -21,6 +24,7 @@ import {
   STAGE_WIDTH,
 } from './constants';
 import { FRUITS } from './fruits';
+import { resolveMergeBatch, type MergeContact } from './merge';
 import type { FruitContact, FruitSnapshot, PhysicsWorld, Unsubscribe } from './physics';
 import type { Renderer } from './renderer';
 import type { FruitTier, GameStatus } from './types';
@@ -52,8 +56,8 @@ export interface Game {
  *
  * - `aimAt` / `drop` / `dropAt` … 入力（input.ts）が呼ぶ
  * - `currentTier` / `nextTier` / `aimX` … HUD（#8）と描画が読む
- * - `addScore` … 合体（#7）が加点する
- * - `onFruitContact` / `emit` … 合体（#7）・ゲームオーバー（#9）が物理側の事象を拾って結果を通知する
+ * - `addScore` … 合体以外の加点（デバッグ・計測用）。合体の加点は本モジュール内で行う
+ * - `onFruitContact` / `emit` … ゲームオーバー（#9）が物理側の事象を拾って結果を通知する
  */
 export interface GameController extends Game {
   /**
@@ -81,7 +85,7 @@ export interface GameController extends Game {
   /** 果物どうしの衝突開始（物理側の `collisionStart` を果物だけに絞ったもの） */
   onFruitContact(handler: (contact: FruitContact) => void): Unsubscribe;
   /**
-   * イベントを発火する（#7 / #9 が自分の判定結果を通知するのに使う）。
+   * イベントを発火する（#9 が自分の判定結果を通知するのに使う）。
    *
    * `gameover` を発火したときだけ副作用がある: 状態を `over` へ遷移させ（`statuschange` が先に飛ぶ）、
    * ループを止める。ゲームオーバーの**判定**は #9 の責務、**状態機械の終了**は本モジュールの責務、
@@ -205,6 +209,22 @@ export function createGame(deps: GameDeps): GameController {
   let fps = 0;
   let framesInWindow = 0;
   let fpsWindowStartMs: number | null = null;
+  /**
+   * 現在のフレームに届いた接触ペア（R-D）。
+   *
+   * `physics.step` の中（Matter.js の衝突コールバック）で溜めるだけにして、
+   * ボディの削除・生成は step が返ったあとにまとめて適用する。
+   * エンジンが衝突ペアを走査している最中に World を変更しないための緩衝地帯。
+   */
+  const pendingContacts: MergeContact[] = [];
+
+  const unsubscribeContact = physics.onFruitContact((contact) => {
+    // E-13: playing 以外のフレームではルールを評価しない
+    if (status !== 'playing') {
+      return;
+    }
+    pendingContacts.push({ a: contact.a, b: contact.b });
+  });
 
   function emitEvent<K extends keyof GameEvents>(event: K, payload: GameEvents[K]): void {
     // ハンドラ内で購読解除されても走査が壊れないよう、コピーしてから呼ぶ
@@ -220,6 +240,44 @@ export function createGame(deps: GameDeps): GameController {
       stopLoop();
     }
     emitEvent(event, payload);
+  }
+
+  /** スコアを加算する（内部用。`assertUsable` は公開側で行う） */
+  function applyScore(delta: number): void {
+    if (!Number.isFinite(delta) || delta === 0) {
+      return;
+    }
+    score += delta;
+    emitEvent('scorechange', { score });
+  }
+
+  /**
+   * 溜まった接触ペアを 1 パスで畳み込み、成立した合体を物理世界へ適用する（FR-03 / FR-04 / R-D）。
+   *
+   * 呼ぶのは `physics.step` が返ったあと。判定は merge.ts の純関数が行うため、
+   * ここは「消す・作る・加点する・通知する」だけを順に実行する。
+   *
+   * イベントは合体 1 件ごとに `merge` を発火し、`scorechange` はフレーム分をまとめて 1 回だけ流す
+   * （同時合体でスコア表示が同一フレーム内に何度も書き換わるのを避ける）。
+   */
+  function applyMerges(): void {
+    if (pendingContacts.length === 0) {
+      return;
+    }
+    const { merges, score: gained } = resolveMergeBatch(pendingContacts);
+    pendingContacts.length = 0;
+
+    for (const merge of merges) {
+      for (const fruitId of merge.consumedFruitIds) {
+        physics.removeFruit(fruitId);
+      }
+      if (merge.kind === 'promote') {
+        // annihilate（スイカ同士）では新しい果物を作らない（tier 11 は存在しない）
+        physics.addFruit(merge.tier, merge.x, merge.y);
+      }
+      emitEvent('merge', { tier: merge.tier, score: merge.score, x: merge.x, y: merge.y });
+    }
+    applyScore(gained);
   }
 
   function setStatus(next: GameStatus): void {
@@ -287,6 +345,8 @@ export function createGame(deps: GameDeps): GameController {
     lastFrameMs = timestampMs;
 
     physics.step(deltaMs);
+    // 衝突コールバックの外（step の完了後）で盤面を変更する（R-D）
+    applyMerges();
     draw();
     measureFps(timestampMs);
     scheduleFrame();
@@ -374,6 +434,8 @@ export function createGame(deps: GameDeps): GameController {
       assertUsable();
       stopLoop();
       physics.clearFruits();
+      // 盤面を消す前のフレームで届いた接触は、もう存在しない果物を指すので捨てる
+      pendingContacts.length = 0;
       if (score !== 0) {
         score = 0;
         emitEvent('scorechange', { score });
@@ -404,11 +466,7 @@ export function createGame(deps: GameDeps): GameController {
 
     addScore(delta) {
       assertUsable();
-      if (!Number.isFinite(delta) || delta === 0) {
-        return;
-      }
-      score += delta;
-      emitEvent('scorechange', { score });
+      applyScore(delta);
     },
 
     onFruitContact(handler) {
@@ -455,6 +513,8 @@ export function createGame(deps: GameDeps): GameController {
       }
       stopLoop();
       disposed = true;
+      unsubscribeContact();
+      pendingContacts.length = 0;
       for (const set of Object.values(handlers)) {
         set.clear();
       }
