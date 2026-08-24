@@ -4,13 +4,16 @@
   "private": true,
   "type": "module",
   "description": "ブラウザで遊べるスイカゲーム（Vite + TypeScript + Matter.js）",
+  "engines": {
+    "node": ">=22.12"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test",
+    "test:e2e": "npm run build && playwright test",
     "lint": "eslint .",
     "format": "prettier --write ."
   },

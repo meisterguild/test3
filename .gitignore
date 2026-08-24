@@ -26,3 +26,9 @@ playwright-report/
 
 # Vite のローカルキャッシュ
 .vite/
+
+# ローカル環境変数（NFR-03 により本来は不要だが、誤コミットの経路を塞ぐ）
+.env
+.env.*
+!.env.example
+*.local

@@ -27,9 +27,14 @@ export default defineConfig({
     },
   ],
   webServer: {
-    // host を明示する。`vite preview` の既定 host（localhost）は環境によって ::1 だけを
-    // listen するため、IPv4 の baseURL と食い違って webServer 待機がタイムアウトする。
-    command: `npm run build && npm run preview -- --host ${PREVIEW_HOST} --port ${PREVIEW_PORT} --strictPort`,
+    /*
+     * ビルドは `npm run test:e2e`（package.json 側）で必ず実行する。ここに build を含めると
+     * reuseExistingServer が効いたとき command 自体が動かず、古い dist/ に対して緑になる。
+     *
+     * host を明示するのは、`vite preview` の既定 host（localhost）が環境によって ::1 だけを
+     * listen し、IPv4 の baseURL と食い違って webServer 待機がタイムアウトするため。
+     */
+    command: `npm run preview -- --host ${PREVIEW_HOST} --port ${PREVIEW_PORT} --strictPort`,
     url: BASE_URL,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,

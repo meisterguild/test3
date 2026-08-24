@@ -10,7 +10,12 @@ test('トップページに空の canvas が表示される', async ({ page }) =
   const canvas = page.getByTestId('game-canvas');
   await expect(canvas).toBeVisible();
 
-  // 論理座標系 480×720（契約点 §5）が canvas 属性として設定されていること
+  /*
+   * 論理座標系 480×720（契約点 §5）が canvas 属性として設定されていること。
+   * 現在この値は index.html の属性 / src/style.css の --stage-aspect / 本ファイルの
+   * 3 箇所にある。T-04 で src/game/constants.ts（STAGE_WIDTH / STAGE_HEIGHT）へ
+   * 集約する際は 3 箇所すべてを constants.ts 参照に置き換える。
+   */
   await expect(canvas).toHaveAttribute('width', '480');
   await expect(canvas).toHaveAttribute('height', '720');
 

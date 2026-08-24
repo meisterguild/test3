@@ -267,7 +267,7 @@ AIは以下のドキュメントを生成・更新します。
 ### セットアップ
 
 ```bash
-# 依存のインストール（Node.js 22 以上）
+# 依存のインストール（Node.js 22.12 以上。package.json の engines を参照）
 npm install
 
 # E2E を実行する場合のみ、初回にブラウザを取得する
@@ -283,11 +283,13 @@ npx playwright install --with-deps chromium
 | `npm run preview` | ビルド成果物をローカルで配信 |
 | `npm test` | 単体テスト（Vitest / `tests/unit/**/*.test.ts`） |
 | `npm run test:watch` | 単体テストの watch 実行 |
-| `npm run test:e2e` | E2E テスト（Playwright / `tests/e2e/**/*.spec.ts`。build → preview を自動起動） |
+| `npm run test:e2e` | E2E テスト（Playwright / `tests/e2e/**/*.spec.ts`。build 実行後に preview を自動起動） |
 | `npm run lint` | ESLint（`template/` 配下は対象外） |
 | `npm run format` | Prettier で整形（`template/` 配下・Markdown は対象外） |
 
 単体テストの既定環境は `node` です。DOM が必要なテストだけ、ファイル先頭に `// @vitest-environment jsdom` を書いて切り替えます。
+
+本番ビルドはソースマップを出力しません。デバッグ時のみ `VITE_SOURCEMAP=1 npm run build` で有効化できます。
 
 ### アプリのファイル構成（メタ層・コピーしない）
 

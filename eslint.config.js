@@ -2,6 +2,9 @@ import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 import prettier from 'eslint-config-prettier';
 
+/** ブラウザで動く src/** から参照させない Node のグローバル */
+const NODE_GLOBALS = ['process', 'global', 'Buffer', '__dirname', '__filename', 'setImmediate'];
+
 /**
  * ESLint flat config。対象はこのリポジトリのメタ層で開発しているスイカゲームのソースのみ。
  * `template/` 配下（プロジェクトへコピーされるペイロード）は lint 対象外にする。
@@ -18,9 +21,10 @@ export default tseslint.config(
     ],
   },
   js.configs.recommended,
-  ...tseslint.configs.recommended,
   {
+    // 型情報を使うルールまで有効化する（projectService のコストを検査の利得に見合わせる）
     files: ['**/*.ts'],
+    extends: [...tseslint.configs.recommendedTypeChecked],
     languageOptions: {
       parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname },
     },
@@ -37,9 +41,10 @@ export default tseslint.config(
        */
       'no-restricted-globals': [
         'error',
-        { name: 'process', message: 'ブラウザ側コードから Node のグローバルは参照しない' },
-        { name: 'global', message: 'ブラウザ側コードから Node のグローバルは参照しない' },
-        { name: '__dirname', message: 'ブラウザ側コードから Node のグローバルは参照しない' },
+        ...NODE_GLOBALS.map((name) => ({
+          name,
+          message: 'ブラウザ側コードから Node のグローバルは参照しない',
+        })),
         { name: 'require', message: 'ESM を使う（CommonJS の require は使わない）' },
       ],
     },

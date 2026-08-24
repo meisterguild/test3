@@ -15,16 +15,34 @@ function requireCanvas(): HTMLCanvasElement {
   return el;
 }
 
-/** 盤面がまだ空であることが分かる程度の下地だけを描く（T-04 で renderer.ts に置き換える） */
-function paintPlaceholder(canvas: HTMLCanvasElement): void {
+/**
+ * 描画に必要な 2D コンテキストを取得する。
+ * 取得できない環境（NFR-02 の対象外ブラウザ）ではゲームが成立しないので、
+ * canvas 不在と同じ「描画不能」として例外で扱う（扱いを 1 つに揃える）。
+ */
+function requireContext(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
   const ctx = canvas.getContext('2d');
   if (ctx === null) {
-    // Canvas 2D が使えない環境（NFR-02 の対象外ブラウザ）。ゲーム自体は成立しないが
-    // 例外で真っ白にはせず、以降の issue で扱えるようログだけ残す。
-    console.error('Canvas 2D コンテキストを取得できませんでした');
-    return;
+    throw new Error('Canvas 2D コンテキストを取得できませんでした');
   }
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  return ctx;
 }
 
-paintPlaceholder(requireCanvas());
+/**
+ * 起動処理。基盤構築（T-01）の範囲では canvas と 2D コンテキストが揃うことの確認だけを行う。
+ * 描画不能なら理由をユーザーにも見える形で出す（無言の空白画面にしない）。
+ */
+function bootstrap(): void {
+  try {
+    // ここで得たコンテキストを T-04 で renderer.ts / game.ts へ渡す
+    requireContext(requireCanvas());
+  } catch (error) {
+    console.error(error);
+    const message = document.createElement('p');
+    message.setAttribute('role', 'alert');
+    message.textContent = 'ゲームを表示できませんでした。ブラウザを最新版に更新してください。';
+    document.body.appendChild(message);
+  }
+}
+
+bootstrap();

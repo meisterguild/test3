@@ -1,4 +1,3 @@
-/// <reference types="vitest" />
 import { defineConfig } from 'vitest/config';
 
 /**
@@ -12,7 +11,8 @@ export default defineConfig({
     // （Vite の既定 baseline に依存させず、要件由来の値としてここに固定する）。
     target: ['es2022', 'chrome111', 'edge111', 'firefox111', 'safari16.4'],
     outDir: 'dist',
-    sourcemap: true,
+    // 本番成果物にソースを埋め込まない。デバッグしたいときだけ `VITE_SOURCEMAP=1` を付ける。
+    sourcemap: process.env.VITE_SOURCEMAP === '1',
   },
   test: {
     // NFR-05: ゲームルールは純関数なので DOM 不要。DOM が必要なテストだけ
