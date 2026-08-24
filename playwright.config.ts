@@ -28,15 +28,20 @@ export default defineConfig({
   ],
   webServer: {
     /*
-     * ビルドは `npm run test:e2e`（package.json 側）で必ず実行する。ここに build を含めると
-     * reuseExistingServer が効いたとき command 自体が動かず、古い dist/ に対して緑になる。
+     * build もこの command に含める。npm script 側に置くと `npx playwright test` や
+     * IDE から直接起動したときに build が走らず、古い dist/ でテストが緑になる。
      *
      * host を明示するのは、`vite preview` の既定 host（localhost）が環境によって ::1 だけを
      * listen し、IPv4 の baseURL と食い違って webServer 待機がタイムアウトするため。
      */
-    command: `npm run preview -- --host ${PREVIEW_HOST} --port ${PREVIEW_PORT} --strictPort`,
+    command: `npm run build && npm run preview -- --host ${PREVIEW_HOST} --port ${PREVIEW_PORT} --strictPort`,
     url: BASE_URL,
-    reuseExistingServer: !process.env.CI,
+    /*
+     * 既存サーバを再利用しない。再利用すると command 自体が実行されず build が飛ぶため、
+     * 「常に最新の dist/ を検証する」保証が失われる。手元で preview を起動したまま
+     * E2E を回すと strictPort で衝突するので、その場合は先に preview を止める。
+     */
+    reuseExistingServer: false,
     timeout: 120_000,
   },
 });

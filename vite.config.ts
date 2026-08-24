@@ -11,8 +11,11 @@ export default defineConfig({
     // （Vite の既定 baseline に依存させず、要件由来の値としてここに固定する）。
     target: ['es2022', 'chrome111', 'edge111', 'firefox111', 'safari16.4'],
     outDir: 'dist',
-    // 本番成果物にソースを埋め込まない。デバッグしたいときだけ `VITE_SOURCEMAP=1` を付ける。
-    sourcemap: process.env.VITE_SOURCEMAP === '1',
+    /*
+     * 本番成果物にソースを埋め込まない。障害解析が必要なときだけ `SOURCEMAP=1` を付ける。
+     * `VITE_` 接頭辞は「クライアントへ露出する env」の名前空間なので、意図的に使わない。
+     */
+    sourcemap: process.env.SOURCEMAP === '1',
   },
   test: {
     // NFR-05: ゲームルールは純関数なので DOM 不要。DOM が必要なテストだけ

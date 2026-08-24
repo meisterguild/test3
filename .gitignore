@@ -30,5 +30,6 @@ playwright-report/
 # ローカル環境変数（NFR-03 により本来は不要だが、誤コミットの経路を塞ぐ）
 .env
 .env.*
-!.env.example
+
+# 各種ツールのローカル上書き設定（*.local.* / *.local）。共有しない前提の個人設定
 *.local
