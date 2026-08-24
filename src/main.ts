@@ -7,6 +7,7 @@
  * （import した時点で起動してしまうため単体テストには向かない）。テスト対象は `src/game/**` 側に置く。
  */
 
+import { createSfx } from './audio/sfx';
 import { CONTAINER_LEFT, CONTAINER_RIGHT, DROP_COOLDOWN_MS } from './game/constants';
 import { createGame, type GameController } from './game/game';
 import { createInput } from './game/input';
@@ -272,7 +273,13 @@ function bootstrap(): void {
 
     observeViewport(canvas, game);
     // スコア・ハイスコア・次の果物・ミュート（FR-05 / FR-06 / FR-08 / DT-02）
-    createHud({ mount: requireHudMount(canvas), game, store });
+    const hud = createHud({ mount: requireHudMount(canvas), game, store });
+    /*
+     * 効果音（FR-11）。ミュートの保持・永続化は HUD 側にあり、ここでは初期値と変化を渡すだけ。
+     * `onMuteChange` はアロー関数で包む（`this` を使わない実装だが、束縛を外した関数参照を
+     * そのまま配らないため）。
+     */
+    createSfx({ game, muted: hud.muted, subscribeMuted: (handler) => hud.onMuteChange(handler) });
     // ゲームオーバーモーダルとポーズ / 再開（FR-07 / FR-09 / UI-02）
     createGameModal({ mount: requireControlsMount(canvas), game });
     // 落下操作（FR-01 / FR-10）。ページ全体で遊べるようキー入力は window で受ける

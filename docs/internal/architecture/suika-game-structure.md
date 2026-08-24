@@ -42,7 +42,7 @@
 ├── vite.config.ts              # Vitest 設定も同居 (T-01)
 ├── playwright.config.ts        # (T-01)
 ├── public/
-│   └── sounds/                 # 効果音 (T-09)
+│   └── sounds/                 # 効果音の音源置き場 (T-09)。現状は Web Audio 合成音のため空
 ├── src/
 │   ├── main.ts                 # エントリ。DOM 取得 → game 起動 (T-04)
 │   ├── style.css               # レイアウト・レスポンシブ (T-04 / T-10)
