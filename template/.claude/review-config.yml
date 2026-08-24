@@ -1,0 +1,11 @@
+# AI レビュー (push ゲート) の動作制御
+#
+# `.claude/hooks/review-runner.py` が読む設定。環境変数（REVIEW_AGENT 等）が最優先。
+# コメントを外した行だけが有効になる。
+
+agent: claude            # claude / codex / both（本テンプレは claude CLI の存在を前提とするため claude 既定）
+# model:                 # エージェント側のモデル名 (空でデフォルト)
+# model_depth:           # low / medium / high (claude --effort に渡す)
+# depth: low             # 報告対象 severity の最低ライン: low (全部) / medium (medium+high) / high (high のみ)
+# block_level: high      # block 対象 severity (カンマ区切り。例: "high,medium")
+# timeout: 600           # AI CLI 全体のタイムアウト秒、既定 10 分

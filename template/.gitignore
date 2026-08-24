@@ -1,0 +1,11 @@
+# playwright-cli のセッション一時ファイル（snapshot yml 等）
+.playwright-cli/
+
+# AI レビュー (push ゲート) の実行結果・raw 出力（review-runner.py が生成）
+.claude/last-review.*
+
+# ローカル専用の作業メモ（review-runner.py が業務 context として読む pr-draft 等）
+.local/
+
+# Python バイトコードキャッシュ
+__pycache__/

@@ -1,0 +1,15 @@
+# このリポジトリ（テンプレートリポジトリ）自身の git 管理設定。
+# プロジェクトへコピーされるペイロード側の設定は template/.gitignore を参照。
+
+# AI レビュー (push ゲート) の実行結果・raw 出力（review-runner.py が生成）
+# 本リポジトリ内では基準ディレクトリのフォールバックにより template/.claude/ 側へ出力される。
+# スラッシュを含むパターンはこの .gitignore の位置にアンカーされるため、両方を明示する
+# （template/.gitignore 側の同名パターンに依存しない）
+.claude/last-review.*
+template/.claude/last-review.*
+
+# ローカル専用の作業メモ（review-runner.py が業務 context として読む pr-draft 等）
+.local/
+
+# Python バイトコードキャッシュ
+__pycache__/

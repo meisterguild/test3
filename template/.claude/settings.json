@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [],
+    "additionalDirectories": []
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "G=\"$CLAUDE_PROJECT_DIR/.claude/hooks/push-review-gate.sh\"; [ -x \"$G\" ] || { echo '✖ push-review-gate.sh が見つかりません。fail-closed のため push を中止します。' >&2; exit 2; }; exec \"$G\"",
+            "timeout": 900
+          }
+        ]
+      }
+    ]
+  }
+}

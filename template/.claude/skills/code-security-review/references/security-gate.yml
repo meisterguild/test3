@@ -1,0 +1,110 @@
+# AI レビュー対象ファイルパターンのルール（テンプレート版）
+#
+# `.claude/hooks/review-runner.py`（PreToolUse push ゲート経由で起動）が読む設定ファイル。
+# `git push` 時に `upstream..HEAD` の差分を以下 3 パターンで判定する:
+#
+#   require_security_review_when_changed:
+#     差分にこのパターンと一致するファイルがあれば AI レビューを実行
+#   skip_when_only_changed:
+#     差分のファイルがすべてこのパターンと一致すれば素通り
+#   redact_from_review:
+#     AI に diff 内容を送らない（ファイル名のみ通知）
+#
+# パターン記法: `:(glob)` magic 付きの git pathspec（`git help glob` 参照）。
+#   `**` … 任意個数のパスコンポーネントにマッチ（0 個含む）
+#   `*`  … `/` 以外の任意文字にマッチ
+#
+# このファイルは固有 PJ で **必ず確認・編集** する。各セクション内のコメントに
+# 「PJ で追加」と書かれている箇所が編集ポイント。`redact_from_review` と
+# `skip_when_only_changed` は汎用のため、原則そのまま残せる。
+
+# いずれかの変更ファイルが以下に一致したら AI レビューを実行する。
+require_security_review_when_changed:
+
+  # --- ① プロジェクトのソースコード本体（PJ で追加）---------------------
+  # 言語・モノレポ構成によって異なるためテンプレ既定値は空。
+  # 自プロジェクトのソース配置に合わせて以下に追記する。
+  # 例:
+  #   - "src/**/*.ts"             # 単一パッケージ TypeScript
+  #   - "src/**/*.py"             # Python
+  #   - "api/src/**/*.ts"         # モノレポ api
+  #   - "client/app/**/*.tsx"     # モノレポ client (React Router)
+
+
+  # --- ② セキュリティ関連の横断パターン（命名規約ベース、テンプレ既定で有効）---
+  # 認証 / 認可
+  - "**/auth/**"
+  - "**/*auth*.ts"
+  # 入力バリデーション
+  - "**/*validator*.ts"
+  # ミドルウェア
+  - "**/*middleware*.ts"
+
+
+  # --- ③ 機密 / 設定（テンプレ既定で有効）-------------------------------
+  # 環境変数 / シークレット
+  - "**/.env*"
+  # 実行時の security posture に影響する設定
+  - "**/*.config.ts"
+
+
+  # --- ④ 依存関係（`package.json` は既定で有効、ロックファイルは PJ で追加）---
+  # package.json の依存追加は脆弱性の流入経路
+  - "**/package.json"
+  # 自プロジェクトのロックファイルを追記する。例:
+  #   - "**/pnpm-lock.yaml"      # pnpm
+  #   - "**/yarn.lock"           # yarn
+  #   - "**/package-lock.json"   # npm
+  #   - "**/poetry.lock"         # Poetry
+  #   - "**/Gemfile.lock"        # Bundler
+
+
+  # --- ⑤ DB スキーマ / マイグレーション / 生 SQL（一部 PJ で追加）----------
+  # SQL / DB ディレクトリ全般
+  - "**/*.sql"
+  - "**/db/**"
+  # 自プロジェクトの ORM 配置を追記する。例:
+  #   - "**/drizzle/**"      # Drizzle
+  #   - "**/prisma/**"       # Prisma
+  #   - "**/migrations/**"   # 汎用 migrations ディレクトリ
+
+
+  # --- ⑥ Claude harness 自身（boilerplate 固定、原則そのまま残す）-------
+  # 設定や hook が変わると security 挙動・許可ルール自体が変わる
+  - ".claude/settings.json"
+  - ".claude/settings.local.json"
+  - ".claude/hooks/**"
+  # 本ファイル（ゲートのルール定義）を含む skill 配下の設定類。
+  # ルール変更だけの push が無審査でゲートを無力化できないようにする
+  - ".claude/skills/**/*.yml"
+  # レビュー観点スキル本体（SKILL.md は review prompt に直接注入される実質的な
+  # ルール定義のため、md であってもレビュー対象にする。skip 側の md は
+  # ルート直下と docs/ に限定してあり、ここが優先される）
+  - ".claude/skills/code-security-review/**"
+  - ".claude/skills/code-quality-review/**"
+
+
+# 機密情報を含む可能性があるため、AI レビューに **diff の内容を送らない** ファイル。
+# ファイル名は AI に通知されるが、変更内容は秘匿される。
+redact_from_review:
+  - "**/.env*"
+  - "**/*.pem"
+  - "**/id_rsa*"
+  - "**/*credentials*"
+  - "**/*secret*"
+
+
+# 変更ファイルがすべて以下に一致する場合は、たとえ require_* に該当する
+# ファイルが含まれていても skip する。
+# ドキュメント / フォーマット / メタファイルだけの変更を早期スキップする用途。
+skip_when_only_changed:
+  # ルート直下の Markdown（README 等。`*` は `/` を跨がないため配下の md は対象外。
+  # require に該当しない md のみの変更は、skip に載せずとも「対象 0 件」で
+  # 早期 skip される。ここを広げすぎると require ⑥ のルール保護が迂回される）
+  - "*.md"
+  # docs/ 配下
+  - "docs/**"
+  # プロジェクトメタ
+  - ".gitignore"
+  - ".editorconfig"
+  - "LICENSE"
