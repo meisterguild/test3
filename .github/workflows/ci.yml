@@ -1,0 +1,41 @@
+# スイカゲーム（メタ層のアプリ）の CI。
+# PR と既定ブランチ（develop）への push で lint / 単体テスト / 本番ビルドを回す。
+# E2E（Playwright）はブラウザ取得のコストが大きいのでここには含めない。
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [develop]
+
+# 同一 ref に後続 push が来たら古い実行は捨てる（デプロイと違い途中結果に価値がない）
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: lint / test / build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # package.json の engines は >=22.12。.npmrc の engine-strict=true により
+          # これを下回ると npm ci 自体が失敗する。
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run lint
+
+      - run: npm test
+
+      # `npm run build` は `tsc --noEmit`（型チェック）→ `vite build` の順で走る。
+      # base はローカルと同じ既定値（`/`）のままでよい（公開用のビルドは pages.yml が行う）。
+      - run: npm run build
