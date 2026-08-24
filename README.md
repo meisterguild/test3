@@ -289,7 +289,7 @@ npx playwright install --with-deps chromium
 
 単体テストの既定環境は `node` です。DOM が必要なテストだけ、ファイル先頭に `// @vitest-environment jsdom` を書いて切り替えます。
 
-本番ビルドはソースマップを出力しません。障害解析が必要なときだけ `SOURCEMAP=1 npm run build` で有効化できます。
+本番ビルドはソースマップを出力しません。障害解析が必要なときだけ `SUIKA_SOURCEMAP=1 npm run build` で有効化できます。
 
 `npm run test:e2e` は毎回ビルドし直した `dist/` を preview 経由で検証します（既存サーバは再利用しません）。`npm run preview` を起動したままだとポート 4173 が衝突するので、先に止めてください。
 

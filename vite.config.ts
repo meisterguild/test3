@@ -12,10 +12,11 @@ export default defineConfig({
     target: ['es2022', 'chrome111', 'edge111', 'firefox111', 'safari16.4'],
     outDir: 'dist',
     /*
-     * 本番成果物にソースを埋め込まない。障害解析が必要なときだけ `SOURCEMAP=1` を付ける。
-     * `VITE_` 接頭辞は「クライアントへ露出する env」の名前空間なので、意図的に使わない。
+     * 本番成果物にソースを埋め込まない。障害解析が必要なときだけ `SUIKA_SOURCEMAP=1` を付ける。
+     * `VITE_` 接頭辞は「クライアントへ露出する env」の名前空間なので使わず、
+     * 汎用名（SOURCEMAP 等）が偶然設定されていて誤って有効化されないよう接頭辞を付ける。
      */
-    sourcemap: process.env.SOURCEMAP === '1',
+    sourcemap: process.env.SUIKA_SOURCEMAP === '1',
   },
   test: {
     // NFR-05: ゲームルールは純関数なので DOM 不要。DOM が必要なテストだけ

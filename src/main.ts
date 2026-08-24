@@ -4,9 +4,15 @@
  * 基盤構築（T-01）の範囲は「空の canvas が表示されるところまで」。
  * 物理・描画・ゲームループの初期化（`src/game/game.ts` の生成と起動）は T-04 でここに繋ぐ。
  * 契約点: docs/internal/architecture/suika-game-structure.md §2
+ *
+ * 本ファイルは読み込み時に `bootstrap()` を実行する副作用モジュールなので、
+ * 内部関数は export しない（import した時点で起動してしまうため単体テストには向かない）。
+ * テスト可能な形への分割は、エントリを書き換える T-04（issue #5）でまとめて行う。
  */
 
-export function requireCanvas(): HTMLCanvasElement {
+const ERROR_MESSAGE_TESTID = 'boot-error';
+
+function requireCanvas(): HTMLCanvasElement {
   // 契約点 §9: DOM 要素の取得は data-testid で行う
   const el = document.querySelector<HTMLCanvasElement>('canvas[data-testid="game-canvas"]');
   if (el === null) {
@@ -20,12 +26,25 @@ export function requireCanvas(): HTMLCanvasElement {
  * 取得できない環境（NFR-02 の対象外ブラウザ）ではゲームが成立しないので、
  * canvas 不在と同じ「描画不能」として例外で扱う（扱いを 1 つに揃える）。
  */
-export function requireContext(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
+function requireContext(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
   const ctx = canvas.getContext('2d');
   if (ctx === null) {
     throw new Error('Canvas 2D コンテキストを取得できませんでした');
   }
   return ctx;
+}
+
+/** 起動失敗を画面にも出す。何度呼ばれても表示は 1 つだけにする。 */
+function showBootError(): void {
+  if (document.querySelector(`[data-testid="${ERROR_MESSAGE_TESTID}"]`) !== null) {
+    return;
+  }
+  const message = document.createElement('p');
+  message.dataset.testid = ERROR_MESSAGE_TESTID;
+  message.setAttribute('role', 'alert');
+  message.textContent =
+    'ゲームを表示できませんでした。詳細はブラウザのコンソールを確認してください。';
+  document.body.appendChild(message);
 }
 
 /**
@@ -36,18 +55,13 @@ export function requireContext(canvas: HTMLCanvasElement): CanvasRenderingContex
  * コンテキスト取得失敗（対象外ブラウザ）のどちらもここに来るため、
  * 原因の特定は console のログに委ねる。
  */
-export function bootstrap(): void {
+function bootstrap(): void {
   try {
-    // 戻り値は T-04 で renderer.ts / game.ts へ渡す。現時点は取得可否の確認のみ。
-    const ctx = requireContext(requireCanvas());
-    void ctx;
+    // T-04 ではここで得たコンテキストを renderer.ts / game.ts へ渡す。現時点は取得可否の確認のみ。
+    requireContext(requireCanvas());
   } catch (error) {
     console.error('ゲームの初期化に失敗しました', error);
-    const message = document.createElement('p');
-    message.setAttribute('role', 'alert');
-    message.textContent =
-      'ゲームを表示できませんでした。詳細はブラウザのコンソールを確認してください。';
-    document.body.appendChild(message);
+    showBootError();
   }
 }
 

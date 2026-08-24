@@ -42,6 +42,10 @@ export default defineConfig({
      * E2E を回すと strictPort で衝突するので、その場合は先に preview を止める。
      */
     reuseExistingServer: false,
-    timeout: 120_000,
+    // tsc + vite build + preview 起動の合計をカバーする値
+    timeout: 180_000,
+    // build / preview の出力を握り潰さない（起動失敗の原因を追えるようにする）
+    stdout: 'pipe',
+    stderr: 'pipe',
   },
 });

@@ -27,9 +27,12 @@ playwright-report/
 # Vite のローカルキャッシュ
 .vite/
 
-# ローカル環境変数（NFR-03 により本来は不要だが、誤コミットの経路を塞ぐ）
-.env
-.env.*
+# ローカル環境変数（NFR-03 により本来は不要だが、誤コミットの経路を塞ぐ）。
+# Vite の慣習に合わせ、共有される .env / .env.production は追跡し、
+# ローカル上書き分（.env.local / .env.<mode>.local）だけを ignore する。
+.env.local
+.env.*.local
 
-# 各種ツールのローカル上書き設定（*.local.* / *.local）。共有しない前提の個人設定
+# 個人設定のローカル上書き（例: *.local.json / settings.local.json）
 *.local
+*.local.*
