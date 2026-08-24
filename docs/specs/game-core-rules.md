@@ -52,7 +52,7 @@
 | 接触ペア列 | `Array<{ a: FruitRef; b: FruitRef }>`。`FruitRef` は `{ id: number; tier: FruitTier; x: number; y: number }` | 物理層（`physics.ts` の衝突イベント）を 1 フレーム分まとめたもの |
 | 乱数源 | `rng: () => number`。契約は `0 <= rng() < 1` | 既定は `Math.random`。テストは固定値関数を注入する（NFR-05） |
 | フレーム経過時間 | `dtMs: number`（`0 <= dtMs`） | ゲームループ |
-| 盤面スナップショット | `Array<{ id: number; tier: FruitTier; y: number; landed: boolean }>` | 物理層。`landed` は「ドロップ後に一度でも他の物体（壁・床・果物）と接触したか」 |
+| 盤面スナップショット | `Array<{ id: number; tier: FruitTier; y: number; radius: number; landed: boolean }>` | 物理層。`landed` は「ドロップ後に一度でも他の物体（壁・床・果物）と接触したか」。`radius` は R-E の上端判定（`y - radius`）に使う |
 | ゲーム状態 | `GameStatus`（契約点 §3） | `game.ts` の状態機械 |
 
 座標系は契約点 §5 の論理座標系 480×720。**y は下方向が正**（canvas 慣習）。したがって「デッドラインより上」は `y` が小さい側を指す。

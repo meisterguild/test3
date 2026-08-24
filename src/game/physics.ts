@@ -43,6 +43,14 @@ import type { FruitTier } from './types';
 export interface FruitBody extends Body {
   readonly fruitId: number;
   readonly tier: FruitTier;
+  /**
+   * ドロップ後に一度でも他の物体（壁・床・果物）と接触したか（spec R-E の `landed`）。
+   *
+   * ゲームオーバー判定（gameover.ts）が落下中の果物を除外するために使う。
+   * 接触は物理層でしか観測できない（`collisionStart` は壁・床との組も含む）ため、
+   * 状態の保持もここで行う。一度 `true` になったら `false` へは戻さない。
+   */
+  landed: boolean;
 }
 
 /** 果物 1 個の状態のスナップショット（描画・判定用。Matter.js に依存しない値） */
@@ -57,6 +65,11 @@ export interface FruitSnapshot {
   angle: number;
   /** スリープ中か（R-05 の確認用。HUD / デバッグ表示にも使う） */
   isSleeping: boolean;
+  /**
+   * ドロップ後に一度でも他の物体（壁・床・果物）と接触したか（spec R-E の `landed`）。
+   * ゲームオーバー判定（gameover.ts）が落下中の果物を除外するために読む。
+   */
+  landed: boolean;
 }
 
 /**
@@ -74,6 +87,17 @@ export interface FruitContact {
 /** 購読解除する関数 */
 export type Unsubscribe = () => void;
 
+/** {@link PhysicsWorld.addFruit} の任意指定 */
+export interface AddFruitOptions {
+  /**
+   * 生成時点で着地済みとして扱うか（spec R-E の `landed`）。既定は `false`。
+   *
+   * 合体で生まれた果物には `true` を渡す（既に積み上がった 2 個から生まれるため、
+   * 落下中とはみなさない。spec R-E / E-12）。
+   */
+  landed?: boolean;
+}
+
 export interface PhysicsWorld {
   /**
    * 果物を 1 個追加する。
@@ -81,9 +105,10 @@ export interface PhysicsWorld {
    * @param tier 果物の段階（半径・見た目は {@link FRUITS} 由来）
    * @param x 論理座標系の中心 x
    * @param y 論理座標系の中心 y
+   * @param options 生成時の初期状態（{@link AddFruitOptions}）
    * @returns 追加した剛体（`fruitId` の払い出し済み）
    */
-  addFruit(tier: FruitTier, x: number, y: number): FruitBody;
+  addFruit(tier: FruitTier, x: number, y: number, options?: AddFruitOptions): FruitBody;
   /** 果物を 1 個取り除く（合体で消滅させる #7 が使う）。存在しない ID は無視する */
   removeFruit(fruitId: number): void;
   /** 現在の果物すべてのスナップショット（配列は毎回新規。呼び出し側が保持してよい） */
@@ -119,6 +144,7 @@ function toSnapshot(body: FruitBody): FruitSnapshot {
     radius: body.circleRadius ?? 0,
     angle: body.angle,
     isSleeping: body.isSleeping,
+    landed: body.landed,
   };
 }
 
@@ -212,7 +238,25 @@ export function createPhysicsWorld(): PhysicsWorld {
     }
   };
 
+  /**
+   * 接触した果物を着地済みにする（spec R-E の `landed`）。
+   *
+   * 相手が壁・床でも着地とみなすため、合体判定用の絞り込み（{@link notifyContacts}）とは別に走る。
+   * 「落下中」を「まだ何にも当たっていない」で定義することで、容器が満杯で積み上がった山の上に
+   * 乗った果物も（線より下へ落ちきらなくても）判定対象になる。
+   */
+  const markLanded = (event: IEventCollision<MatterEngine>): void => {
+    for (const pair of event.pairs) {
+      for (const body of [pair.bodyA, pair.bodyB]) {
+        if (isFruitBody(body)) {
+          body.landed = true;
+        }
+      }
+    }
+  };
+
   const handleCollisionStart = (event: IEventCollision<MatterEngine>): void => {
+    markLanded(event);
     notifyContacts(event, () => true);
   };
 
@@ -248,7 +292,7 @@ export function createPhysicsWorld(): PhysicsWorld {
   };
 
   return {
-    addFruit(tier, x, y) {
+    addFruit(tier, x, y, options) {
       assertUsable();
       const def = FRUITS[tier];
       if (def === undefined) {
@@ -264,7 +308,11 @@ export function createPhysicsWorld(): PhysicsWorld {
         frictionStatic: FRUIT_FRICTION_STATIC,
       });
 
-      const fruit: FruitBody = Object.assign(body, { fruitId: nextFruitId++, tier });
+      const fruit: FruitBody = Object.assign(body, {
+        fruitId: nextFruitId++,
+        tier,
+        landed: options?.landed ?? false,
+      });
       fruits.set(fruit.fruitId, fruit);
       spawnGrace.set(fruit.fruitId, SPAWN_ACTIVE_CONTACT_STEPS);
       Composite.add(engine.world, fruit);

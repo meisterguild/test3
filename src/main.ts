@@ -7,13 +7,15 @@
  * （import した時点で起動してしまうため単体テストには向かない）。テスト対象は `src/game/**` 側に置く。
  */
 
-import { CONTAINER_LEFT, CONTAINER_RIGHT } from './game/constants';
+import { CONTAINER_LEFT, CONTAINER_RIGHT, DROP_COOLDOWN_MS } from './game/constants';
 import { createGame, type GameController } from './game/game';
 import { createInput } from './game/input';
 import { createPhysicsWorld } from './game/physics';
 import { createRenderer } from './game/renderer';
 import { drawFruitTier } from './game/spawn';
+import { createLocalStore } from './storage/local-store';
 import { createHud } from './ui/hud';
+import { createGameModal } from './ui/modal';
 
 const ERROR_MESSAGE_TESTID = 'boot-error';
 
@@ -23,8 +25,14 @@ const DEBUG_STATS_TESTID = 'debug-stats';
 /** デバッグ計測表示の更新間隔 */
 const DEBUG_STATS_INTERVAL_MS = 1000;
 
-/** `?stress=<個数>` での連続投入間隔。実プレイのクールダウンより短くして早く積ませる */
-const STRESS_DROP_INTERVAL_MS = 120;
+/**
+ * `?stress=<個数>` での連続投入間隔。実プレイのクールダウン（FR-10）と同じ値にする。
+ *
+ * これより短くすると、落下中の果物が次々と空中で触れ合って「着地済みかつデッドラインより上」
+ * の状態が途切れなくなり、盤面が埋まる前にゲームオーバー（#9 / spec R-E）が確定してしまう。
+ * 果物 60 個規模の計測（NFR-01）を成立させるため、実プレイと同じ間隔まで落とす。
+ */
+const STRESS_DROP_INTERVAL_MS = DROP_COOLDOWN_MS;
 
 function requireCanvas(): HTMLCanvasElement {
   // 契約点 §9: DOM 要素の取得は data-testid で行う
@@ -57,6 +65,30 @@ function requireHudMount(canvas: HTMLCanvasElement): HTMLElement {
     document.body.appendChild(mount);
   } else {
     parent.insertBefore(mount, canvas);
+  }
+  return mount;
+}
+
+/**
+ * ポーズ操作・ゲームオーバーモーダル（#9）の差し込み先。無ければ盤面の直後に作る。
+ * HUD と同じ方針（欠落しても遊べる状態を壊さない）。
+ */
+function requireControlsMount(canvas: HTMLCanvasElement): HTMLElement {
+  // 契約点 §9: DOM 要素の取得は data-testid で行う
+  const existing = document.querySelector<HTMLElement>('[data-testid="controls"]');
+  if (existing !== null) {
+    return existing;
+  }
+  const mount = document.createElement('section');
+  mount.className = 'controls';
+  mount.dataset.testid = 'controls';
+  mount.setAttribute('aria-label', 'ゲーム操作');
+  const parent = canvas.parentNode;
+  if (parent === null) {
+    document.body.appendChild(mount);
+  } else {
+    // 盤面の直後（＝盤面の下）に置く
+    parent.insertBefore(mount, canvas.nextSibling);
   }
   return mount;
 }
@@ -120,28 +152,49 @@ function startDebugStats(game: GameController): void {
 }
 
 /**
- * 指定個数を短い間隔で連続投入する（`?stress=<個数>`。NFR-01 の計測用）。
+ * 指定個数を連続投入する（`?stress=<個数>`。NFR-01 の計測用）。
  *
  * 一度にまとめて投入すると生成位置が重なって強く弾き合い、計測にならないため間隔を空ける。
+ * ゲームオーバー（#9）で盤面が止まったら投入も止める。
+ *
+ * @param intervalMs 投入間隔。既定は {@link STRESS_DROP_INTERVAL_MS}
  */
-function startStressFill(game: GameController, count: number): void {
+function startStressFill(game: GameController, count: number, intervalMs: number): void {
   const span = CONTAINER_RIGHT - CONTAINER_LEFT;
   let dropped = 0;
   const timer = window.setInterval(() => {
-    if (dropped >= count) {
+    if (dropped >= count || game.status === 'over') {
       window.clearInterval(timer);
       return;
     }
     // 容器内へ横方向に散らす（同じ x に積み続けると 1 本の塔になり負荷の傾向が偏る）
     game.dropAt(CONTAINER_LEFT + ((dropped * 37) % span));
     dropped += 1;
-  }, STRESS_DROP_INTERVAL_MS);
+  }, intervalMs);
+}
+
+/**
+ * `?interval=<ms>` の解釈（`?stress=` と併用したときだけ効く）。
+ *
+ * クールダウンより短い間隔での連続投入は、落下中の果物が空中で触れ合って
+ * デッドライン超過が途切れなくなる（＝盤面が埋まる前にゲームオーバーへ到達する）。
+ * ゲームオーバー経路を E2E から短時間で踏むための足場。
+ *
+ * @returns 1 フレーム（16ms）以上の間隔。未指定・解釈できない値なら既定値
+ */
+function resolveStressInterval(raw: string | null): number {
+  const value = Number.parseInt(raw ?? '', 10);
+  if (!Number.isFinite(value)) {
+    return STRESS_DROP_INTERVAL_MS;
+  }
+  return Math.max(16, value);
 }
 
 /**
  * URL のクエリパラメータでデバッグ用の足場を有効化する。
  *
  * - `?stress=<個数>` … 指定個数を連続投入する（計測表示も自動で有効化）
+ * - `?interval=<ms>` … `?stress=` の投入間隔を上書きする（既定は実プレイのクールダウン）
  * - `?fps=1` … 実測 fps / 果物数 / sleeping 数を表示する
  */
 function startDebugTools(game: GameController): void {
@@ -149,7 +202,7 @@ function startDebugTools(game: GameController): void {
 
   const stress = Number.parseInt(params.get('stress') ?? '', 10);
   if (Number.isFinite(stress) && stress > 0) {
-    startStressFill(game, stress);
+    startStressFill(game, stress, resolveStressInterval(params.get('interval')));
   }
   if (params.get('stress') !== null || params.get('fps') === '1') {
     startDebugStats(game);
@@ -167,15 +220,20 @@ function startDebugTools(game: GameController): void {
 function bootstrap(): void {
   try {
     const canvas = requireCanvas();
+    const store = createLocalStore();
     const game = createGame({
       physics: createPhysicsWorld(),
       renderer: createRenderer(canvas),
       drawTier: drawFruitTier,
+      // gameover の payload（ハイスコア更新の有無）に保存済みの記録を使う（FR-06 / UI-02）
+      readHighScore: () => store.getHighScore(),
     });
 
     observeViewport(canvas, game);
     // スコア・ハイスコア・次の果物・ミュート（FR-05 / FR-06 / FR-08 / DT-02）
-    createHud({ mount: requireHudMount(canvas), game });
+    createHud({ mount: requireHudMount(canvas), game, store });
+    // ゲームオーバーモーダルとポーズ / 再開（FR-07 / FR-09 / UI-02）
+    createGameModal({ mount: requireControlsMount(canvas), game });
     // 落下操作（FR-01 / FR-10）。ページ全体で遊べるようキー入力は window で受ける
     createInput(canvas, game);
     game.start();

@@ -127,10 +127,129 @@ body {
   width: auto;
   height: auto;
   max-width: 100%;
-  /* タイトル + HUD + 余白の分を差し引く（HUD 追加で 96px では収まらなくなった。精緻化は T-10） */
-  max-height: calc(100vh - 152px);
+  /*
+   * タイトル + HUD + 操作バー + 余白の分を差し引く
+   * （T-09 でポーズ操作の 1 行が増えたため 152px では収まらない。精緻化は T-10）
+   */
+  max-height: calc(100vh - 200px);
   aspect-ratio: var(--stage-aspect);
   background: var(--color-surface);
   border-radius: 12px;
   touch-action: none;
+}
+
+/*
+ * ポーズ操作とゲームオーバーモーダル（T-09 / FR-09 / UI-02）。
+ * 中身は src/ui/modal.ts が生成する。
+ */
+.controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 480px;
+}
+
+.controls__pause {
+  padding: 8px 20px;
+  color: inherit;
+  font: inherit;
+  font-size: 0.9rem;
+  background: rgb(255 255 255 / 10%);
+  border: 1px solid rgb(255 255 255 / 25%);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.controls__pause[aria-pressed='true'] {
+  background: rgb(255 255 255 / 22%);
+}
+
+.controls__pause:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* 盤面の上に重ねる。終了状態を明示するため背後の操作は届かせない */
+.modal {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgb(0 0 0 / 62%);
+}
+
+/* hidden 属性を効かせる（.modal の display: flex に上書きされるのを防ぐ） */
+.modal[hidden] {
+  display: none;
+}
+
+.modal__panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  max-width: 320px;
+  padding: 24px;
+  text-align: center;
+  background: #262c33;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 16px;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 45%);
+}
+
+.modal__title {
+  margin: 0 0 8px;
+  font-size: 1.3rem;
+}
+
+.modal__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin: 0;
+  font-size: 1rem;
+}
+
+.modal__label {
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  opacity: 0.75;
+}
+
+.modal__value {
+  font-weight: 700;
+  /* 桁が変わっても表示幅が揺れないようにする */
+  font-variant-numeric: tabular-nums;
+}
+
+.modal__record {
+  margin: 0;
+  color: #ffd766;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.modal__record[hidden] {
+  display: none;
+}
+
+.modal__retry {
+  margin-top: 8px;
+  padding: 10px 16px;
+  color: #1b1f24;
+  font: inherit;
+  font-weight: 700;
+  background: #ffd766;
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.modal__retry:focus-visible {
+  outline: 3px solid #fff;
+  outline-offset: 2px;
 }

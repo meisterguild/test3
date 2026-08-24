@@ -1,6 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { CONTAINER_LEFT, CONTAINER_RIGHT, DROP_Y } from '../../src/game/constants';
+import {
+  CONTAINER_LEFT,
+  CONTAINER_RIGHT,
+  DEADLINE_Y,
+  DROP_Y,
+  GAMEOVER_GRACE_MS,
+  MAX_PHYSICS_STEPS_PER_FRAME,
+  PHYSICS_TIMESTEP_MS,
+} from '../../src/game/constants';
 import { FRUITS, MAX_TIER } from '../../src/game/fruits';
 import { createGame, type GameEvents } from '../../src/game/game';
 import type { FruitContact, FruitSnapshot, PhysicsWorld } from '../../src/game/physics';
@@ -8,9 +16,21 @@ import type { Renderer, Scene } from '../../src/game/renderer';
 import { mergeScore, WATERMELON_ANNIHILATE_SCORE } from '../../src/game/score';
 import type { FruitTier, GameStatus } from '../../src/game/types';
 
+/**
+ * 実物（physics.ts）と同じ「固定ステップの積み上げ + 1 フレームの上限」で
+ * 消化ステップ数を返す。game.ts はこの数からゲームオーバー判定の経過時間を作るため、
+ * スタブでも実物と同じ量の時間しか進まないようにする（spec E-11 / R-6）。
+ */
+function simulatedSteps(deltaMs: number): number {
+  if (!Number.isFinite(deltaMs) || deltaMs <= 0) {
+    return 0;
+  }
+  return Math.min(MAX_PHYSICS_STEPS_PER_FRAME, Math.floor(deltaMs / PHYSICS_TIMESTEP_MS));
+}
+
 /** 物理世界のスタブ。呼び出しの記録だけを行い、Matter.js には依存しない（NFR-05） */
 function createStubPhysics() {
-  const added: { tier: FruitTier; x: number; y: number }[] = [];
+  const added: { tier: FruitTier; x: number; y: number; landed: boolean }[] = [];
   const removed: number[] = [];
   const steps: number[] = [];
   const contactHandlers = new Set<(contact: FruitContact) => void>();
@@ -26,8 +46,8 @@ function createStubPhysics() {
   const mutationsInsideStep: number[] = [];
 
   const physics: PhysicsWorld = {
-    addFruit(tier, x, y) {
-      added.push({ tier, x, y });
+    addFruit(tier, x, y, options) {
+      added.push({ tier, x, y, landed: options?.landed ?? false });
       const snapshot: FruitSnapshot = {
         fruitId: added.length,
         tier,
@@ -36,6 +56,7 @@ function createStubPhysics() {
         radius: FRUITS[tier]?.radius ?? 0,
         angle: 0,
         isSleeping: false,
+        landed: options?.landed ?? false,
       };
       fruits = [...fruits, snapshot];
       // 返り値の FruitBody は game.ts では参照しないため、必要な形だけ満たす
@@ -59,7 +80,7 @@ function createStubPhysics() {
       if (queued.length > 0) {
         mutationsInsideStep.push(added.length + removed.length);
       }
-      return 1;
+      return simulatedSteps(deltaMs);
     },
     onFruitContact(handler) {
       contactHandlers.add(handler);
@@ -96,6 +117,29 @@ function createStubPhysics() {
       contactsDuringStep.push(...contacts);
     },
     mutationsInsideStep,
+    /**
+     * 盤面へ果物を直接置く（既定は着地済み・デッドラインより上）。
+     * ゲームオーバー判定（spec R-E）の入力を、物理を動かさずに組むために使う。
+     */
+    place: (overrides: Partial<FruitSnapshot> = {}): FruitSnapshot => {
+      const snapshot: FruitSnapshot = {
+        fruitId: 1000 + fruits.length,
+        tier: 0,
+        x: 240,
+        y: DEADLINE_Y - 10,
+        radius: FRUITS[0]?.radius ?? 0,
+        angle: 0,
+        isSleeping: false,
+        landed: true,
+        ...overrides,
+      };
+      fruits = [...fruits, snapshot];
+      return snapshot;
+    },
+    /** 盤面を空にする（超過の解消を再現する。`clearFruits` の呼び出し記録は増やさない） */
+    emptyBoard: (): void => {
+      fruits = [];
+    },
     /** 盤面の変更回数（追加 + 削除）。`mutationsInsideStep` との比較に使う */
     mutationCount: () => added.length + removed.length,
     clearCount: () => clearCount,
@@ -150,7 +194,7 @@ function createFrameDriver() {
   };
 }
 
-function setup(options: { drawTier?: () => FruitTier } = {}) {
+function setup(options: { drawTier?: () => FruitTier; readHighScore?: () => number } = {}) {
   const physicsStub = createStubPhysics();
   const rendererStub = createStubRenderer();
   const frames = createFrameDriver();
@@ -160,8 +204,37 @@ function setup(options: { drawTier?: () => FruitTier } = {}) {
     requestFrame: frames.requestFrame,
     cancelFrame: frames.cancelFrame,
     ...(options.drawTier === undefined ? {} : { drawTier: options.drawTier }),
+    ...(options.readHighScore === undefined ? {} : { readHighScore: options.readHighScore }),
   });
-  return { game, physicsStub, rendererStub, frames };
+
+  /**
+   * `ms` 以上の時間をフレームに分けて進める。
+   *
+   * 1 フレームで進める物理時間には上限があるため（{@link MAX_PHYSICS_STEPS_PER_FRAME}）、
+   * 猶予時間ぶんの経過を作るには複数フレームが必要になる。
+   *
+   * @returns 実際に進んだフレーム数
+   */
+  const advanceMs = (ms: number): number => {
+    /** 1 フレームで進む物理時間（上限に張り付かせる） */
+    const simulatedPerFrameMs = MAX_PHYSICS_STEPS_PER_FRAME * PHYSICS_TIMESTEP_MS;
+    // 端数の取りこぼしで 1 ステップ減らないよう、実 delta は少し多めに渡す
+    const framePeriodMs = simulatedPerFrameMs + 1;
+    let elapsed = 0;
+    let timestamp = 1000;
+    let count = 0;
+    // 初回フレームは delta 0 として扱われるため、時間を進めない 1 フレームを先に流す
+    frames.runFrame(timestamp);
+    while (elapsed < ms && frames.pendingCount() > 0) {
+      timestamp += framePeriodMs;
+      frames.runFrame(timestamp);
+      elapsed += simulatedPerFrameMs;
+      count += 1;
+    }
+    return count;
+  };
+
+  return { game, physicsStub, rendererStub, frames, advanceMs };
 }
 
 /** 呼ばれた順に tier を返す抽選スタブ（尽きたら最後の値を繰り返す） */
@@ -251,7 +324,7 @@ describe('createGame', () => {
     game.start();
     expect(game.dropAt(240)).toBe(true);
 
-    expect(physicsStub.added).toEqual([{ tier: 3, x: 240, y: DROP_Y }]);
+    expect(physicsStub.added).toEqual([{ tier: 3, x: 240, y: DROP_Y, landed: false }]);
     expect(drops).toEqual([{ tier: 3 }]);
   });
 
@@ -301,7 +374,7 @@ describe('createGame', () => {
 
     game.dropAt(240, 9);
 
-    expect(physicsStub.added).toEqual([{ tier: 9, x: 240, y: DROP_Y }]);
+    expect(physicsStub.added).toEqual([{ tier: 9, x: 240, y: DROP_Y, landed: false }]);
     expect(game.currentTier).toBe(0);
     expect(game.nextTier).toBe(1);
   });
@@ -335,7 +408,7 @@ describe('createGame', () => {
     game.aimAt(180);
     expect(game.drop()).toBe(true);
 
-    expect(physicsStub.added).toEqual([{ tier: 1, x: 180, y: DROP_Y }]);
+    expect(physicsStub.added).toEqual([{ tier: 1, x: 180, y: DROP_Y, landed: false }]);
     // 落とした位置に次の果物が待機する
     expect(game.aimX).toBe(180);
   });
@@ -479,8 +552,8 @@ describe('createGame', () => {
     game.onFruitContact(handler);
 
     const contact: FruitContact = {
-      a: { fruitId: 1, tier: 1, x: 0, y: 0, radius: 19, angle: 0, isSleeping: false },
-      b: { fruitId: 2, tier: 1, x: 1, y: 1, radius: 19, angle: 0, isSleeping: false },
+      a: { fruitId: 1, tier: 1, x: 0, y: 0, radius: 19, angle: 0, isSleeping: false, landed: true },
+      b: { fruitId: 2, tier: 1, x: 1, y: 1, radius: 19, angle: 0, isSleeping: false, landed: true },
     };
     for (const contactHandler of physicsStub.contactHandlers) {
       contactHandler(contact);
@@ -512,6 +585,157 @@ describe('createGame', () => {
 
     expect(game.fps).toBeGreaterThan(55);
     expect(game.fps).toBeLessThan(65);
+  });
+
+  it('[FR-07 / R-E] 着地済みの果物がデッドラインを超え続けるとゲームオーバーになる', () => {
+    const { game, physicsStub, frames, advanceMs } = setup();
+    const events: string[] = [];
+    game.on('statuschange', ({ status }) => events.push(`status:${status}`));
+    game.on('gameover', () => events.push('gameover'));
+    game.start();
+    physicsStub.place({ y: DEADLINE_Y - 5, landed: true });
+
+    // 猶予時間の手前では確定しない
+    advanceMs(GAMEOVER_GRACE_MS / 2);
+    expect(game.status).toBe('playing');
+    expect(game.overMs).toBeGreaterThan(0);
+    expect(game.overMs).toBeLessThan(GAMEOVER_GRACE_MS);
+
+    advanceMs(GAMEOVER_GRACE_MS);
+    expect(game.status).toBe('over');
+    expect(game.overMs).toBeGreaterThanOrEqual(GAMEOVER_GRACE_MS);
+    // 状態遷移が先、gameover が後（契約点 §7 の発火順）
+    expect(events).toEqual(['status:playing', 'status:over', 'gameover']);
+    // ループは止まり、終了後の盤面が 1 枚描かれている
+    expect(frames.pendingCount()).toBe(0);
+  });
+
+  it('[R-03 / AC-12] 落下中の果物だけがデッドラインより上にあってもゲームオーバーにならない', () => {
+    const { game, advanceMs } = setup();
+    game.start();
+    // ドロップ待機位置（DROP_Y）はデッドラインより上。落下中は判定対象外
+    game.dropAt(240);
+
+    advanceMs(GAMEOVER_GRACE_MS * 2);
+
+    expect(game.status).toBe('playing');
+    expect(game.overMs).toBe(0);
+  });
+
+  it('[R-E] 猶予時間内に超過が解消すれば継続時間は 0 に戻る', () => {
+    const { game, physicsStub, advanceMs } = setup();
+    game.start();
+    physicsStub.place({ y: DEADLINE_Y - 5, landed: true });
+
+    advanceMs(GAMEOVER_GRACE_MS / 2);
+    expect(game.overMs).toBeGreaterThan(0);
+
+    // 崩れて盤面から消えた（= 超過果物 0 個。E-10 と同じ経路）
+    physicsStub.emptyBoard();
+    advanceMs(0);
+
+    expect(game.overMs).toBe(0);
+    expect(game.status).toBe('playing');
+  });
+
+  it('[R-6 / E-11] タブ復帰直後の巨大な delta でも猶予を飛び越えない', () => {
+    const { game, physicsStub, frames } = setup();
+    game.start();
+    physicsStub.place({ y: DEADLINE_Y - 5, landed: true });
+
+    frames.runFrame(1000);
+    // 60 秒ぶんの delta。物理が進むのは 1 フレーム上限までなので、超過時間もその分だけ増える
+    frames.runFrame(61_000);
+
+    expect(game.status).toBe('playing');
+    expect(game.overMs).toBeCloseTo(MAX_PHYSICS_STEPS_PER_FRAME * PHYSICS_TIMESTEP_MS, 5);
+  });
+
+  it('[UI-02] gameover の payload はハイスコア更新の有無を含む（契約点 §7）', () => {
+    const { game, physicsStub, advanceMs } = setup({ readHighScore: () => 100 });
+    const payloads: GameEvents['gameover'][] = [];
+    game.on('gameover', (payload) => payloads.push(payload));
+    game.start();
+    physicsStub.place({ y: DEADLINE_Y - 5, landed: true });
+
+    game.addScore(40);
+    advanceMs(GAMEOVER_GRACE_MS);
+
+    // 記録（100）に届いていないので更新なし。表示するハイスコアは保存済みの値
+    expect(payloads).toEqual([{ score: 40, highScore: 100, isNewHighScore: false }]);
+  });
+
+  it('[UI-02] 保存済みハイスコアを超えたら isNewHighScore が true になる', () => {
+    const { game, physicsStub, advanceMs } = setup({ readHighScore: () => 100 });
+    const payloads: GameEvents['gameover'][] = [];
+    game.on('gameover', (payload) => payloads.push(payload));
+    game.start();
+    physicsStub.place({ y: DEADLINE_Y - 5, landed: true });
+
+    game.addScore(101);
+    advanceMs(GAMEOVER_GRACE_MS);
+
+    expect(payloads).toEqual([{ score: 101, highScore: 101, isNewHighScore: true }]);
+  });
+
+  it('[FR-09] ポーズ中は物理が進まず、再開で続行できる', () => {
+    const { game, physicsStub, frames } = setup();
+    const statuses: GameStatus[] = [];
+    game.on('statuschange', ({ status }) => statuses.push(status));
+    game.start();
+    physicsStub.place({ y: DEADLINE_Y - 5, landed: true });
+    frames.runFrame(1000);
+
+    game.pause();
+    expect(game.status).toBe('paused');
+    expect(frames.pendingCount()).toBe(0);
+    const stepsWhilePaused = physicsStub.steps.length;
+    // ポーズ中は経過時間も積まない（R-6: 戻ったら終わっていた を防ぐ）
+    const overMsWhilePaused = game.overMs;
+
+    game.resume();
+    expect(game.status).toBe('playing');
+    expect(frames.pendingCount()).toBe(1);
+    // 再開直後のフレームは delta 0 扱いなので、停止していた時間は積まれない
+    frames.runFrame(120_000);
+    expect(physicsStub.steps.length).toBe(stepsWhilePaused + 1);
+    expect(game.overMs).toBe(overMsWhilePaused);
+    expect(statuses).toEqual(['playing', 'paused', 'playing']);
+  });
+
+  it('[FR-09] ゲームオーバー後の restart で盤面・スコア・超過時間が初期化される', () => {
+    const { game, physicsStub, advanceMs, frames } = setup({ readHighScore: () => 0 });
+    game.start();
+    physicsStub.place({ y: DEADLINE_Y - 5, landed: true });
+    game.addScore(50);
+    advanceMs(GAMEOVER_GRACE_MS);
+    expect(game.status).toBe('over');
+
+    const scores: number[] = [];
+    game.on('scorechange', ({ score }) => scores.push(score));
+    game.restart();
+
+    expect(game.status).toBe('playing');
+    expect(game.score).toBe(0);
+    expect(scores).toEqual([0]);
+    expect(game.overMs).toBe(0);
+    expect(physicsStub.clearCount()).toBe(1);
+    expect(game.snapshot()).toHaveLength(0);
+    // ループが再開している（続けて遊べる）
+    expect(frames.pendingCount()).toBe(1);
+  });
+
+  it('[R-E] 合体で生まれた果物は着地済みとして扱う（E-12）', () => {
+    const { game, physicsStub, frames } = setup({ drawTier: drawTierSequence([1, 1, 1, 1]) });
+    game.start();
+    game.dropAt(200);
+    game.dropAt(220);
+
+    physicsStub.queueContacts(physicsStub.contactOf(1, 2));
+    frames.runFrame(1000);
+
+    // 落としたぶんは landed:false、合体で生成したぶんは landed:true
+    expect(physicsStub.added.map((fruit) => fruit.landed)).toEqual([false, false, true]);
   });
 
   it('dispose 後はループが止まり、操作は例外になる', () => {
@@ -550,7 +774,7 @@ describe('createGame の合体処理', () => {
     frames.runFrame(1000);
 
     expect(physicsStub.removed).toEqual([1, 2]);
-    expect(physicsStub.added.at(-1)).toEqual({ tier: 1, x: 220, y: DROP_Y });
+    expect(physicsStub.added.at(-1)).toEqual({ tier: 1, x: 220, y: DROP_Y, landed: true });
     expect(merges).toEqual([{ tier: 1, score: mergeScore(1), x: 220, y: DROP_Y }]);
     // scorechange はフレーム分をまとめて 1 回
     expect(scores).toEqual([{ score: mergeScore(1) }]);
@@ -642,7 +866,7 @@ describe('createGame の合体処理', () => {
     frames.runFrame(1016);
 
     expect(merges.map((merge) => merge.tier)).toEqual([1, 2]);
-    expect(physicsStub.added.at(-1)).toEqual({ tier: 2, x: 200, y: DROP_Y });
+    expect(physicsStub.added.at(-1)).toEqual({ tier: 2, x: 200, y: DROP_Y, landed: true });
     expect(game.score).toBe(mergeScore(1) + mergeScore(2));
     expect(game.snapshot().map((fruit) => fruit.tier)).toEqual([2]);
   });
