@@ -1,0 +1,75 @@
+# スイカゲーム（メタ層のアプリ）の CI。lint / 型チェック / 単体テスト / E2E を PR ごとに回す。
+#
+# `template/` 配下（プロジェクトへコピーされるペイロード）は lint / テストの対象外なので、
+# 本ワークフローはメタ層のアプリと hook 回帰テストだけを見る。
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [develop, main]
+
+# 同じブランチへ続けて push したときは古い実行を止める（E2E は実行時間が長い）
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  app:
+    name: lint / build / unit / e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # 下限は package.json の engines（>=22.12）。.npmrc の engine-strict が食い違いを弾く
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      # 型チェック（tsc --noEmit）+ 本番ビルド。E2E も内部で build するが、
+      # 型エラーは webServer のログに埋もれるより先に単独で落としたい
+      - name: Build
+        run: npm run build
+
+      - name: Unit test (Vitest)
+        run: npm test
+
+      # E2E は build 済みの dist/ を preview 経由で検証する（playwright.config.ts の webServer）。
+      # 対象ブラウザは chromium のみ（mobile-portrait プロジェクトも chromium で動く）
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: E2E test (Playwright)
+        run: npm run test:e2e
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+
+  hooks:
+    name: push レビューゲートの回帰テスト
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # review-runner.py は Python 3.8+ / 標準ライブラリのみ（CLAUDE.md のメタ層テスト規約）
+          python-version: '3.11'
+
+      - name: Unit test (unittest)
+        run: python3 -m unittest discover -s tests
