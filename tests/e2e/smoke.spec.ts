@@ -1,4 +1,6 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test } from '@playwright/test';
+
+import { logicalToClientX, measureFruitBand } from './support/canvas-probe';
 
 /**
  * 物理・描画の基盤（T-04）と落下操作（T-05 / FR-01）のスモークテスト。
@@ -50,61 +52,6 @@ test('トップページの canvas が表示され、盤面が描画される', 
 /** ドロップのクールダウン（FR-10 / `DROP_COOLDOWN_MS`）を確実に越える待ち時間 */
 const COOLDOWN_WAIT_MS = 600;
 
-/**
- * 指定した論理座標 y の帯に描かれた果物ピクセルを数え、平均 x（論理座標）を返す。
- *
- * ゲーム内部の状態を `window` へ露出させない（本番コードにテスト用の口を作らない）ため、
- * 観測は描画結果のピクセルだけで行う。背景・容器の色は除外する。
- */
-async function measureFruitBand(
-  page: Page,
-  logicalTop: number,
-  logicalBottom: number,
-): Promise<{ pixels: number; centerX: number | null }> {
-  return page.evaluate(
-    ({ logicalTop: top, logicalBottom: bottom }) => {
-      const canvas = document.querySelector<HTMLCanvasElement>('canvas[data-testid="game-canvas"]');
-      const ctx = canvas?.getContext('2d') ?? null;
-      if (canvas === null || ctx === null) {
-        return { pixels: 0, centerX: null };
-      }
-      // 論理座標系 480×720 → 実解像度の倍率（R-04）
-      const scale = canvas.width / 480;
-      /*
-       * 走査範囲は容器の内側だけに絞る（壁の縁のアンチエイリアスを果物と数えないため、
-       * 内側へ 2px 分だけ余白を取る）。
-       */
-      const left = Math.round(40 * scale) + 2;
-      const right = Math.round(440 * scale) - 2;
-      const width = right - left;
-      const y0 = Math.round(top * scale);
-      const height = Math.max(1, Math.round((bottom - top) * scale));
-      const { data } = ctx.getImageData(left, y0, width, height);
-      // 背景 #f7f2e7 / 容器 #8a6a44 に近い色は盤面として無視する
-      const ignored = [
-        [247, 242, 231],
-        [138, 106, 68],
-      ];
-      let pixels = 0;
-      let sumX = 0;
-      for (let i = 0; i < data.length; i += 4) {
-        const [r, g, b] = [data[i] ?? 0, data[i + 1] ?? 0, data[i + 2] ?? 0];
-        const isBoard = ignored.some(
-          ([ir, ig, ib]) =>
-            Math.abs(r - (ir ?? 0)) + Math.abs(g - (ig ?? 0)) + Math.abs(b - (ib ?? 0)) < 30,
-        );
-        if (isBoard) {
-          continue;
-        }
-        pixels += 1;
-        sumX += (left + ((i / 4) % width)) / scale;
-      }
-      return { pixels, centerX: pixels === 0 ? null : sumX / pixels };
-    },
-    { logicalTop, logicalBottom },
-  );
-}
-
 test('[FR-01] ポインタで狙いが左右に動き、クリックで果物が落ちて積み上がる', async ({ page }) => {
   await page.goto('/');
 
@@ -116,7 +63,7 @@ test('[FR-01] ポインタで狙いが左右に動き、クリックで果物が
     return;
   }
   /** 論理座標 x を canvas 上のクライアント座標へ直す */
-  const clientX = (logicalX: number): number => box.x + (logicalX / 480) * box.width;
+  const clientX = (logicalX: number): number => logicalToClientX(box, logicalX);
   const clientY = box.y + box.height / 2;
 
   // ドロップ待機中の果物（DROP_Y = 60）が狙いの位置に描かれる

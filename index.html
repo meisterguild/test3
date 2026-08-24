@@ -16,19 +16,27 @@
       -->
       <section class="hud" data-testid="hud" aria-label="スコア表示"></section>
       <!--
-        canvas の属性値は契約点 §5 の論理座標系 480×720（初期値）。
-        起動後は src/game/renderer.ts が「CSS 表示サイズ × devicePixelRatio」の
-        実解像度へ書き換える（R-04）。ここの値は初回描画までの暫定サイズとしてのみ効く。
-        値の複製は tests/unit/constants.test.ts が constants.ts と突き合わせて検知する。
+        盤面の枠（T-10 / UI-03）。タイトル・HUD・操作バーを差し引いた残りの高さを受け取り、
+        canvas はその中でアスペクト比 2:3 を保ったまま最大化する（サイズ決定は src/style.css）。
+        canvas 自身を flex アイテムにするとアスペクト比と縮小の解決がブラウザ差に晒されるため、
+        「残り高さを持つ箱」と「箱に収まる canvas」に分ける。
       -->
-      <canvas
-        class="app__canvas"
-        data-testid="game-canvas"
-        width="480"
-        height="720"
-        role="img"
-        aria-label="ゲーム盤面"
-      ></canvas>
+      <div class="app__stage" data-testid="stage">
+        <!--
+          canvas の属性値は契約点 §5 の論理座標系 480×720（初期値）。
+          起動後は src/game/renderer.ts が「CSS 表示サイズ × devicePixelRatio」の
+          実解像度へ書き換える（R-04）。ここの値は初回描画までの暫定サイズとしてのみ効く。
+          値の複製は tests/unit/constants.test.ts が constants.ts と突き合わせて検知する。
+        -->
+        <canvas
+          class="app__canvas"
+          data-testid="game-canvas"
+          width="480"
+          height="720"
+          role="img"
+          aria-label="ゲーム盤面"
+        ></canvas>
+      </div>
       <!--
         ポーズ操作とゲームオーバーモーダルの差し込み先。
         中身は src/ui/modal.ts が生成する（契約点 §9 の testid:

@@ -1,6 +1,12 @@
 /*
- * 基盤構築（T-01）時点の最小レイアウト。
- * レスポンシブ / スマホ縦持ち最適化（UI-03 / R-04）は T-10 で拡張する。
+ * レイアウト（T-01 の最小構成 → T-10 でレスポンシブ / タッチ最適化。UI-03 / R-04）。
+ *
+ * 方針: 論理座標系 480×720（契約点 §5）は固定のまま、**表示側だけ**をビューポートへ合わせる。
+ * 盤面の実解像度（CSS 表示サイズ × devicePixelRatio）の追従は src/game/renderer.ts が持つので、
+ * ここでの責務は「1 画面に収まる CSS サイズを与えること」だけ。
+ *
+ * - 縦持ち（スマホ）: タイトル / HUD / 盤面 / 操作バーを縦 1 列。盤面が残り高さを取る
+ * - 横長（PC）: 情報（タイトル / HUD / 操作バー）を左列へ寄せ、盤面を右に置く
  */
 
 :root {
@@ -8,6 +14,22 @@
   --color-surface: #f7f2e7;
   --color-text: #f2f4f7;
   --stage-aspect: 480 / 720;
+  /*
+   * 盤面の上限は論理座標系と等倍（UI-03: PC で過剰に拡大させない）。
+   * これ以上広げても情報量は増えず、DPR 1 の環境では拡大による粗さだけが目立つ。
+   */
+  --stage-max-width: 480px;
+  --stage-max-height: 720px;
+  /* 縦の余白は画面高に追従させる（375×667 でも縦 1 列が収まるように詰める） */
+  --app-gap: clamp(6px, 1.6vh, 12px);
+  --app-pad: clamp(8px, 2vw, 16px);
+  /*
+   * 盤面が横に使える幅（`.app` の内容幅 = `.app__stage` の幅）。
+   * 盤面の高さを幅から逆算するために使う（`.app__canvas` のコメント参照）。
+   */
+  --stage-avail-width: calc(
+    100dvw - 2 * var(--app-pad) - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)
+  );
   color-scheme: dark;
 }
 
@@ -19,6 +41,8 @@ html,
 body {
   height: 100%;
   margin: 0;
+  /* 端まで来たスクロールを親へ伝播させない＝引っ張り更新（pull-to-refresh）を止める（UI-03） */
+  overscroll-behavior: none;
 }
 
 body {
@@ -30,37 +54,83 @@ body {
     'Hiragino Kaku Gothic ProN',
     'Noto Sans JP',
     sans-serif;
+  /*
+   * 画面は 1 画面完結（スクロールしない）ので、タッチのパン / ダブルタップズームを止める。
+   * 狙いを合わせるドラッグが画面スクロールに化けるのを防ぐのが目的（UI-03）。
+   * ピンチズームも塞がる点は承知の上で、誤スクロール防止を優先する。
+   */
+  touch-action: none;
+  /* ドラッグ操作でタイトルや HUD の数値が選択されるのを防ぐ */
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .app {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
-  min-height: 100%;
-  padding: 16px;
+  /*
+   * 盤面が上限（等倍）に達して余白が出る背の高い端末では、全体を縦中央に置く。
+   * `safe` 付きを後に書くのは、収まらない極端に低い画面で中央寄せが上端をはみ出させ
+   * （＝タイトルや HUD に手が届かなくなる）ないようにするため。非対応環境では上の行が残る。
+   */
+  justify-content: center;
+  justify-content: safe center;
+  gap: var(--app-gap);
+  /* dvh 非対応ブラウザ向けのフォールバックを先に書く（後勝ちで dvh が採用される） */
+  height: 100vh;
+  height: 100dvh;
+  padding: var(--app-pad);
+  /*
+   * セーフエリア（ノッチ・ホームバー）を避ける。env() 非対応ブラウザは上の padding が残る。
+   * max() ではなく加算にするのは、safe-area が 0 の環境でも最低限の余白を保つため。
+   */
+  padding-block: calc(var(--app-pad) + env(safe-area-inset-top))
+    calc(var(--app-pad) + env(safe-area-inset-bottom));
+  padding-inline: calc(var(--app-pad) + env(safe-area-inset-left))
+    calc(var(--app-pad) + env(safe-area-inset-right));
 }
 
 .app__title {
   margin: 0;
-  font-size: 1.25rem;
+  /* 狭い画面ではタイトルに高さを使わせない（盤面の取り分を優先する） */
+  font-size: clamp(1rem, 4vw, 1.25rem);
   font-weight: 700;
   letter-spacing: 0.05em;
 }
 
 /*
+ * 盤面の枠（T-10 / UI-03）。タイトル・HUD・操作バーを差し引いた残りの高さを受け取る。
+ * `min-height: 0` が無いと flex アイテムは内容サイズ未満に縮まず、ページ全体が伸びて
+ * スクロールが生まれる（375×667 で最初に破綻する箇所）。
+ *
+ * 縦方向の拡大の上限（UI-03: 等倍の 720px まで）はここで掛ける。canvas 側で
+ * `max-height` と `max-width` を併用すると、両方に当たる寸法で表示比が崩れるため
+ * （詳細は `.app__canvas` のコメント）、高さの上限は枠に持たせる。
+ */
+.app__stage {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 0;
+  max-height: var(--stage-max-height);
+}
+
+/*
  * HUD（T-07 / UI-01）。中身は src/ui/hud.ts が生成する。
  * 盤面の横幅（論理 480px）を超えないよう canvas と同じ上限で揃える。
- * 狭い画面向けの最適化（UI-03 / R-04）は T-10 で行う。
+ * 狭い画面では折り返して 2 段になる（盤面の高さは `.app__stage` 側が自動で吸収する）。
  */
 .hud {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: center;
-  gap: 8px 16px;
+  gap: 6px 12px;
   width: 100%;
-  max-width: 480px;
+  max-width: var(--stage-max-width);
 }
 
 .hud__field {
@@ -122,19 +192,28 @@ body {
   opacity: 0.7;
 }
 
+/*
+ * 盤面（UI-03 / R-04）。
+ *
+ * 高さは「枠の残り高さ」と「使える幅から逆算した高さ」の小さい方。幅は `aspect-ratio` が導く。
+ * 「タイトル + HUD + 操作バーの高さを定数で引く」方式（T-09 までの `calc(100vh - 200px)`）は
+ * HUD が折り返す狭い画面で破綻するため、残り高さを枠（`.app__stage`）から受け取る方式にした。
+ *
+ * 幅の上限を `max-width` だけに任せないのが要点。`height` が確定している要素では
+ * `max-width` が効いても高さは縮まず（`aspect-ratio` は指定済みの高さを上書きしない）、
+ * CSS 表示サイズが 2:3 から崩れる → 常に 2:3 のバックバッファが引き伸ばされて描画される
+ * （430×932 のような「幅も高さも上限に当たる」端末で発生した）。高さ側を先に丸めておけば
+ * `max-width` は保険としてしか効かない。
+ */
 .app__canvas {
   display: block;
   width: auto;
-  height: auto;
-  max-width: 100%;
-  /*
-   * タイトル + HUD + 操作バー + 余白の分を差し引く
-   * （T-09 でポーズ操作の 1 行が増えたため 152px では収まらない。精緻化は T-10）
-   */
-  max-height: calc(100vh - 200px);
+  height: min(100%, calc(min(var(--stage-avail-width), var(--stage-max-width)) * 3 / 2));
+  max-width: min(100%, var(--stage-max-width));
   aspect-ratio: var(--stage-aspect);
   background: var(--color-surface);
   border-radius: 12px;
+  /* ドラッグ操作がスクロールに化けないよう塞ぐ（input.ts の preventDefault と二重の防御） */
   touch-action: none;
 }
 
@@ -148,7 +227,7 @@ body {
   justify-content: center;
   gap: 8px;
   width: 100%;
-  max-width: 480px;
+  max-width: var(--stage-max-width);
 }
 
 .controls__pause {
@@ -252,4 +331,117 @@ body {
 .modal__retry:focus-visible {
   outline: 3px solid #fff;
   outline-offset: 2px;
+}
+
+/*
+ * スマホ縦持ち相当の幅では HUD を 1 行に収める（UI-03）。
+ * 折り返すとミュートだけで 1 行を占め、盤面の高さを 40px 前後食う。
+ * これより狭い端末では折り返してよい（`.app__stage` が盤面の高さで吸収する）。
+ */
+@media (max-width: 430px) {
+  .hud__field {
+    min-width: 60px;
+  }
+
+  .hud__field--next {
+    min-width: 78px;
+  }
+
+  .hud__mute {
+    padding: 6px 10px;
+    font-size: 0.78rem;
+  }
+}
+
+/*
+ * タッチ環境向けの当たり判定（UI-03）。指で押すボタンは 44px 角を下限にする。
+ * ポインタ環境（マウス）では現行の見た目を変えないため、粗いポインタだけに当てる。
+ */
+@media (pointer: coarse) {
+  .hud__mute,
+  .controls__pause,
+  .modal__retry {
+    min-height: 44px;
+  }
+}
+
+/*
+ * 横長レイアウト（PC・タブレット横持ち。UI-03）。
+ *
+ * 縦 1 列のままだと盤面が高さに負けて細くなるので、情報（タイトル / HUD / 操作バー）を
+ * 左列へ寄せて盤面に高さを全部渡す。閾値は「左列（180px）と盤面が横に並ぶ幅」で切る。
+ * スマホ横持ち（667×375 等）でも縦 1 列より盤面が大きく取れるので、高さ側の下限は
+ * 操作バーが縦に潰れない程度（320px）に留める。
+ * DOM 順（タイトル → HUD → 盤面 → 操作バー）は変えずに grid の領域指定だけで組み替える
+ * （読み上げ順・タブ順を崩さないため）。
+ */
+@media (min-width: 600px) and (min-height: 320px) and (orientation: landscape) {
+  .app {
+    display: grid;
+    grid-template-columns: minmax(180px, 240px) auto;
+    /* 最終行は余りを吸う空き領域。情報は上に詰め、盤面は全行にまたがる */
+    grid-template-rows: auto auto auto 1fr;
+    grid-template-areas:
+      'title    stage'
+      'hud      stage'
+      'controls stage'
+      '.        stage';
+    justify-content: center;
+    column-gap: clamp(16px, 3vw, 40px);
+    row-gap: var(--app-gap);
+  }
+
+  .app__title {
+    grid-area: title;
+  }
+
+  /* 縦積みにして左揃え（横幅を盤面へ譲る） */
+  .hud {
+    grid-area: hud;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+    max-width: none;
+  }
+
+  .hud__mute {
+    /* 縦積みでは自動マージンで右端へ寄せる意味がないので戻す */
+    margin-inline-start: 0;
+  }
+
+  .controls {
+    grid-area: controls;
+    justify-content: flex-start;
+    max-width: none;
+  }
+
+  .app__stage {
+    grid-area: stage;
+    width: auto;
+  }
+
+  /*
+   * 横長では盤面の縦幅がビューポート高で決まる。grid の行サイズは中身の intrinsic な
+   * 高さ（論理 720px）を吸ってしまい、行が伸びてページがスクロールするため、
+   * 「使える縦幅」から幅を逆算して高さを確定させる（縦持ちの `height: 100%` は使えない）。
+   * 差し引くのは `.app` の縦 padding だけ（横長では盤面の上下に他の要素が来ない）。
+   */
+  .app__canvas {
+    /* dvh / env 非対応ブラウザ向けのフォールバックを先に書く（後勝ち） */
+    width: min(100%, var(--stage-max-width), calc((100vh - 2 * var(--app-pad)) * 2 / 3));
+    width: min(
+      100%,
+      var(--stage-max-width),
+      calc(
+        (
+            100dvh - 2 * var(--app-pad) - env(safe-area-inset-top, 0px) -
+              env(safe-area-inset-bottom, 0px)
+          ) *
+          2 / 3
+      )
+    );
+    height: auto;
+    /* 上限は上の width に織り込んだので、縦持ち用の max-width は外す */
+    max-width: none;
+  }
 }

@@ -284,6 +284,8 @@ npx playwright install --with-deps chromium
 | `npm test` | 単体テスト（Vitest / `tests/unit/**/*.test.ts`） |
 | `npm run test:watch` | 単体テストの watch 実行 |
 | `npm run test:e2e` | E2E テスト（Playwright / `tests/e2e/**/*.spec.ts`。build 実行後に preview を自動起動） |
+
+E2E は 2 プロジェクトで走ります。`chromium`（1280×800 の PC 想定）が全 spec を、`mobile-portrait`（375×667・DPR 2・タッチ有効のスマホ縦持ち想定）が `responsive.spec.ts` だけを対象にします（ホバー前提の操作を含む spec はタッチ環境では成立しないため）。`--project=mobile-portrait` で片方だけ実行できます。
 | `npm run lint` | ESLint（`template/` 配下は対象外） |
 | `npm run format` | Prettier で整形（`template/` 配下・Markdown は対象外） |
 
@@ -322,6 +324,14 @@ npm run build && npm run preview
 - 狙いは容器の内側（果物の半径ぶん内側）までしか動きません。
 - ドロップ後 `DROP_COOLDOWN_MS`（500ms）は次を落とせません（連打・キーリピートで多重に落ちないようにするため）。
 - ポーズ中・ゲームオーバー後は入力を受け付けません。
+
+### 画面レイアウト（UI-03 / R-04）
+
+- 盤面の論理座標系は 480×720 固定で、表示サイズだけがビューポートに追従します（描画は常にアスペクト比 2:3）。
+- 縦持ちはタイトル / HUD / 盤面 / 操作バーの縦 1 列、横長（幅 600px 以上）は情報を左列へ寄せて盤面を右に置きます。どちらもスクロールなしで 1 画面に収まります。
+- 盤面は論理サイズ（480×720）より大きくは表示しません（PC で過剰に拡大させないため）。
+- ウィンドウリサイズ・画面回転・`devicePixelRatio` の変化で canvas の実解像度を作り直します（ぼやけ防止）。
+- タッチ操作中にページがスクロール / 引っ張り更新されないよう `touch-action` と `overscroll-behavior` で塞いでいます。副作用としてピンチズームも無効です。
 - 盤面の下のボタンで一時停止 / 再開できます（FR-09）。ポーズ中は物理も止まります。
 - デッドラインより上に果物がはみ出した状態が 1500ms 続くとゲームオーバーです（FR-07）。モーダルの「もう一度遊ぶ」で盤面・スコアが初期化されます。モーダルは `Esc` では閉じません（終了状態はリトライでのみ解除します）。
 
@@ -347,7 +357,7 @@ npm run build && npm run preview
 │   └── audio/                  # 効果音
 └── tests/
     ├── unit/                   # Vitest
-    ├── e2e/                    # Playwright
+    ├── e2e/                    # Playwright（`support/` は spec 共有の観測ヘルパ）
     └── test_review_runner_diff_range.py  # テンプレート層 hook の回帰テスト（別系統）
 ```
 
