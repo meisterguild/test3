@@ -36,10 +36,13 @@
 │   ├── settings.json                 # このリポジトリでの Claude Code 設定（push ゲートの配線）
 │   └── hooks/push-review-gate.sh     # template/ 側の実体へ委譲するフォワーダ
 ├── tests/                            # テンプレート層の hook のテスト（メタ層）
+├── docs/                             # このリポジトリで開発するスイカゲームのプロジェクト文書（メタ層）
 └── template/                         # ← プロジェクトへコピーする本体
 ```
 
 `template/` 直下がコピー先の**プロジェクトルート**に対応します。したがって `template/CLAUDE.md` は `your-project/CLAUDE.md` に、`template/docs/` は `your-project/docs/` になります。
+
+> ルート `docs/` と `template/docs/` は名前が似ていますが別物です。ルート `docs/` はこのリポジトリ自身で開発しているスイカゲームのプロジェクト文書（メタ層・コピーしない）、`template/docs/` はコピー先プロジェクトのドキュメント雛形（ペイロード）です。詳細は [docs/index.md](./docs/index.md)。
 
 ---
 
@@ -191,6 +194,13 @@ AIは以下のドキュメントを生成・更新します。
 │       └── push-review-gate.sh      # template/ 側の実体へ委譲するフォワーダ
 ├── tests/                           # メタ層（コピーしない）
 │   └── test_review_runner_diff_range.py # review-runner.py の diff_range() の回帰テスト
+├── docs/                            # メタ層（コピーしない）。このリポジトリで開発するスイカゲームのプロジェクト文書
+│   ├── index.md                     # プロジェクト文書の目次
+│   └── internal/
+│       ├── product/                 # プロダクト概要・MVP スコープ
+│       ├── requirements-definition-draft/ # 要件定義ドラフト（要件 ID の真理ソース）
+│       ├── architecture/            # 実装の契約点（技術スタック・共有型・定数・イベント契約）
+│       └── tasks/                   # 作業計画（issue-plan.md）とタスク台帳（backlog.md）
 └── template/                        # ← ここから下がプロジェクトへコピーする本体
     ├── CLAUDE.md                    # Claude Code への指示書。ルール・規約・禁止事項を定義（最重要）
     ├── START_PROMPT.md              # プロジェクト開始時にAIへ渡す開始プロンプト（入口）
@@ -232,6 +242,7 @@ AIは以下のドキュメントを生成・更新します。
 ```
 
 > ※ 本文中の `docs/...`・`.claude/...` といったパス表記は、いずれも**コピー後のプロジェクトルート起点**です（このリポジトリ内では `template/` を前置きした位置にあります）。
+> ※ ルート `docs/`（`template/docs/` ではない方）はメタ層です。このリポジトリで開発する**スイカゲーム**のプロジェクト文書で、テンプレートとしてコピーされません。`template/docs/`（ペイロード）とは別物なので混同しないでください。
 > ※ `tests/` はこのリポジトリ自身の保守用（メタ層）です。テンプレート層の hook のロジックを固定する回帰テストで、プロジェクトへはコピーされません（コピー先の `tests/` と衝突させないため）。実行は `python3 -m unittest discover -s tests`（標準ライブラリのみ・追加依存なし）。
 > ※ `template/`（単数・ペイロードの根）と `template/templates/`（複数・ドキュメントテンプレート置き場）は別物です。
 > ※ スキル実行時には上記に加え、`docs/deliverables/functional-design/`（基本設計書）、`docs/internal/design/`（UIデザイン）、`docs/deliverables/test-scenarios/`（テストシナリオ）、`docs/deliverables/test-evidence/`（動作確認の証跡）が生成されます。
