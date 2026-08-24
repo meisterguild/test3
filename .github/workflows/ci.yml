@@ -2,6 +2,11 @@
 #
 # `template/` 配下（プロジェクトへコピーされるペイロード）は lint / テストの対象外なので、
 # 本ワークフローはメタ層のアプリと hook 回帰テストだけを見る。
+#
+# action の major は Node 24 ランタイム（`runs.using: node24`）の版に揃えてある。
+# 2026-06 以降、runner は node20 の action を node24 へ強制移行して annotation を出すため、
+# node20 の major（checkout@v4 / setup-node@v4 / setup-python@v5 / upload-artifact@v4）は
+# 使わない。上げるときは Node ランタイムも合わせて確認すること。
 name: CI
 
 on:
@@ -20,9 +25,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           # 下限は package.json の engines（>=22.12）。.npmrc の engine-strict が食い違いを弾く
           node-version: '22'
@@ -51,7 +56,7 @@ jobs:
 
       - name: Upload Playwright report
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: playwright-report
           path: |
@@ -64,12 +69,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           # review-runner.py は Python 3.8+ / 標準ライブラリのみ（CLAUDE.md のメタ層テスト規約）
           python-version: '3.11'
 
+      # 本テストは git の挙動そのものを検証対象にしているため、失敗の切り分けに
+      # runner 側のバージョンが要る（ローカルと CI で git の major が離れることがある）
+      - name: Show tool versions
+        run: |
+          python3 --version
+          git --version
+
+      # `-v` はテスト名を 1 件ずつ出す。どの受け入れ条件が落ちたかを log だけで特定できる
       - name: Unit test (unittest)
-        run: python3 -m unittest discover -s tests
+        run: python3 -m unittest discover -s tests -v
