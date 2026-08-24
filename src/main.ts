@@ -44,7 +44,19 @@ function requireCanvas(): HTMLCanvasElement {
 }
 
 /**
- * HUD（#8）の差し込み先。index.html の `.hud` が無ければ `.app` の先頭に作る。
+ * HUD / 操作バーを差し込む位置の基準要素。
+ *
+ * canvas は盤面の枠（index.html の `.app__stage`。残り高さを受け取る箱）に包まれているため、
+ * 枠の内側へ差し込むと縦 1 列のレイアウト（UI-03）が崩れる。
+ * 枠があればそれを、無ければ canvas 自身を基準にする。
+ */
+function stageAnchorOf(canvas: HTMLCanvasElement): HTMLElement {
+  // 契約点 §9: DOM 要素の取得は data-testid で行う
+  return canvas.closest<HTMLElement>('[data-testid="stage"]') ?? canvas;
+}
+
+/**
+ * HUD（#8）の差し込み先。index.html の `.hud` が無ければ盤面の直前に作る。
  *
  * canvas と違い、無ければ作れる要素なので起動を止めない（スコアが見えないまま遊べてしまう
  * 状態を避けるため、欠落時は生成側で補う）。
@@ -59,12 +71,13 @@ function requireHudMount(canvas: HTMLCanvasElement): HTMLElement {
   mount.className = 'hud';
   mount.dataset.testid = 'hud';
   mount.setAttribute('aria-label', 'スコア表示');
-  // 盤面の直前（＝盤面の上）に置く。canvas の親が無い異常系だけ body 末尾へ逃がす
-  const parent = canvas.parentNode;
+  // 盤面の直前（＝盤面の上）に置く。基準要素の親が無い異常系だけ body 末尾へ逃がす
+  const anchor = stageAnchorOf(canvas);
+  const parent = anchor.parentNode;
   if (parent === null) {
     document.body.appendChild(mount);
   } else {
-    parent.insertBefore(mount, canvas);
+    parent.insertBefore(mount, anchor);
   }
   return mount;
 }
@@ -83,12 +96,13 @@ function requireControlsMount(canvas: HTMLCanvasElement): HTMLElement {
   mount.className = 'controls';
   mount.dataset.testid = 'controls';
   mount.setAttribute('aria-label', 'ゲーム操作');
-  const parent = canvas.parentNode;
+  const anchor = stageAnchorOf(canvas);
+  const parent = anchor.parentNode;
   if (parent === null) {
     document.body.appendChild(mount);
   } else {
     // 盤面の直後（＝盤面の下）に置く
-    parent.insertBefore(mount, canvas.nextSibling);
+    parent.insertBefore(mount, anchor.nextSibling);
   }
   return mount;
 }
@@ -107,10 +121,36 @@ function showBootError(): void {
 }
 
 /**
+ * DPR の変化だけを拾う（R-04）。
+ *
+ * ディスプレイ間の移動やズームでは CSS 表示サイズが変わらないことがあり、
+ * `ResizeObserver` も `resize` も発火しないまま実解像度が古いまま残る（＝ぼやける）。
+ * 「現在の DPR に一致する」メディアクエリを張り、外れた瞬間に張り直して通知する。
+ */
+function observeDevicePixelRatio(onChange: () => void): void {
+  if (typeof window.matchMedia !== 'function') {
+    return;
+  }
+  let query: MediaQueryList | null = null;
+  const handleChange = (): void => {
+    // 新しい DPR で監視をやり直してから通知する（次の変化も拾えるようにする）
+    watch();
+    onChange();
+  };
+  function watch(): void {
+    query?.removeEventListener('change', handleChange);
+    query = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+    query.addEventListener('change', handleChange);
+  }
+  watch();
+}
+
+/**
  * 表示サイズ・DPR の変化に追従させる（R-04）。
  *
- * `ResizeObserver` は canvas の CSS サイズ変化（ウィンドウリサイズ・回転）を、
- * `resize` イベントはズームやディスプレイ間移動による DPR 変化を拾う。
+ * `ResizeObserver` は canvas の CSS サイズ変化（ウィンドウリサイズ・画面回転・URL バーの
+ * 出入りによる `100dvh` の変化）を、`resize` と {@link observeDevicePixelRatio} は
+ * 表示サイズを伴わない DPR 変化を拾う。
  * 再描画はループが次フレームで行うため、ここでは解像度合わせだけを行う。
  */
 function observeViewport(canvas: HTMLCanvasElement, game: GameController): void {
@@ -129,6 +169,7 @@ function observeViewport(canvas: HTMLCanvasElement, game: GameController): void 
     new ResizeObserver(applyResize).observe(canvas);
   }
   window.addEventListener('resize', applyResize);
+  observeDevicePixelRatio(applyResize);
 }
 
 /**

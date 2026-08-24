@@ -21,9 +21,27 @@ export default defineConfig({
   projects: [
     {
       // PC 想定。viewport は template/.playwright/cli.config.json と揃える。
-      // スマホ縦持ち向けのプロジェクトは T-10 / T-11 で追加する。
       name: 'chromium',
       use: { ...devices['Desktop Chrome'], viewport: { width: 1280, height: 800 } },
+    },
+    {
+      /*
+       * スマホ縦持ち想定（T-10 / UI-03）。375×667 は iPhone SE 相当。
+       * DPR 2・タッチ有効で、実解像度合わせ（R-04）とタッチ操作の経路も踏む。
+       *
+       * 走らせるのは responsive.spec.ts だけに絞る。他の spec は `page.mouse` による
+       * ホバー前提の操作（狙いの移動）を含み、タッチ環境ではそもそも成立しない
+       * （＝レイアウトの検証にならない失敗になる）。
+       */
+      name: 'mobile-portrait',
+      testMatch: /responsive\.spec\.ts$/,
+      use: {
+        ...devices['Desktop Chrome'],
+        viewport: { width: 375, height: 667 },
+        deviceScaleFactor: 2,
+        isMobile: true,
+        hasTouch: true,
+      },
     },
   ],
   webServer: {
