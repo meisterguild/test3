@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>スイカゲーム</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <main class="app">
+      <h1 class="app__title">スイカゲーム</h1>
+      <!--
+        canvas の属性値は契約点 §5 の論理座標系 480×720。
+        devicePixelRatio に応じた実サイズへのスケール（R-04）は T-04 で
+        src/game/constants.ts + renderer.ts 側に移す。
+      -->
+      <canvas
+        class="app__canvas"
+        data-testid="game-canvas"
+        width="480"
+        height="720"
+        role="img"
+        aria-label="ゲーム盤面"
+      ></canvas>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

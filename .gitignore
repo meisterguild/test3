@@ -13,3 +13,26 @@ template/.claude/last-review.*
 
 # Python バイトコードキャッシュ
 __pycache__/
+
+# --- このリポジトリで開発するスイカゲーム（メタ層のアプリ）の生成物 -----------
+# 依存とビルド成果物
+node_modules/
+dist/
+
+# Playwright の実行結果・レポート
+test-results/
+playwright-report/
+.playwright-cache/
+
+# Vite のローカルキャッシュ
+.vite/
+
+# ローカル環境変数（NFR-03 により本来は不要だが、誤コミットの経路を塞ぐ）。
+# Vite の慣習に合わせ、共有される .env / .env.production は追跡し、
+# ローカル上書き分（.env.local / .env.<mode>.local）だけを ignore する。
+.env.local
+.env.*.local
+
+# 個人設定のローカル上書き（例: *.local.json / settings.local.json）
+*.local
+*.local.*

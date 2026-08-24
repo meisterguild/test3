@@ -44,9 +44,20 @@ cp -r /path/to/000-ai-template/template/. /path/to/your-project/
 ├── .claude/
 │   ├── settings.json                 # このリポジトリでの Claude Code 設定（push ゲートの配線）
 │   └── hooks/push-review-gate.sh     # ペイロード側の実体へ委譲するフォワーダ
-├── tests/                            # ペイロード側 hook の回帰テスト（メタ層）
+├── tests/                            # ペイロード側 hook の回帰テスト（メタ層）＋アプリのテスト
+├── docs/                             # 本リポジトリで開発するアプリのプロジェクト文書（メタ）
+├── index.html / package.json / tsconfig.json / vite.config.ts / playwright.config.ts / eslint.config.js
+│                                     # アプリのビルド・テスト・lint 設定（メタ）
+├── src/ / public/                    # アプリの実装・静的アセット（メタ）
 └── template/                         # ← プロジェクトへコピーする本体（ペイロード）
 ```
+
+### メタ層に置くアプリ
+
+本リポジトリはテンプレート運用の検証を兼ねて、ルート直下でアプリ（スイカゲーム）を開発している。
+**アプリのソース・設定・ドキュメントはすべてメタ層**（`template/` の外）であり、コピー対象ではない。
+規約 1 の判断基準どおり「コピー先で使うか」で決まる — アプリはこのリポジトリ固有の成果物なので
+`template/` 配下には置かない。セットアップ手順と npm scripts は `README.md` を参照。
 
 ### メタ層に置くテスト
 
