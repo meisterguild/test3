@@ -10,9 +10,10 @@
     <main class="app">
       <h1 class="app__title">スイカゲーム</h1>
       <!--
-        canvas の属性値は契約点 §5 の論理座標系 480×720。
-        devicePixelRatio に応じた実サイズへのスケール（R-04）は T-04 で
-        src/game/constants.ts + renderer.ts 側に移す。
+        canvas の属性値は契約点 §5 の論理座標系 480×720（初期値）。
+        起動後は src/game/renderer.ts が「CSS 表示サイズ × devicePixelRatio」の
+        実解像度へ書き換える（R-04）。ここの値は初回描画までの暫定サイズとしてのみ効く。
+        値の複製は tests/unit/constants.test.ts が constants.ts と突き合わせて検知する。
       -->
       <canvas
         class="app__canvas"
