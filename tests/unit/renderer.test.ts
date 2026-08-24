@@ -79,6 +79,7 @@ function fruit(overrides: Partial<FruitSnapshot> = {}): FruitSnapshot {
     radius: FRUITS[5]?.radius ?? 0,
     angle: 0,
     isSleeping: false,
+    landed: true,
     ...overrides,
   };
 }

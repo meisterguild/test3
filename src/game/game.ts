@@ -3,8 +3,11 @@
  *
  * 契約点: docs/internal/architecture/suika-game-structure.md §7（イベント名・payload・API 形）
  *
- * 発火するのは `statuschange` / `drop` / `merge` / `scorechange`。
- * `gameover` は #9 が本モジュールの `emit` 経路に繋ぐ（イベント定義は先に確定させる）。
+ * 発火するのは `statuschange` / `drop` / `merge` / `scorechange` / `gameover`。
+ *
+ * ゲームオーバー（FR-07）は、判定そのものを gameover.ts の純関数に委譲し、本モジュールが
+ * 「継続時間の保持・playing のフレームだけ進める・確定したら状態機械を終端させる」を担う
+ * （docs/specs/game-core-rules.md R-E）。
  *
  * 合体（FR-03 / FR-04）は本モジュールがフレーム単位で適用する。判定そのものは merge.ts の
  * 純関数に委譲し、ここは**接触ペアの収集・物理ボディの削除と生成・スコア加算・イベント発火**だけを行う。
@@ -21,9 +24,11 @@ import {
   CONTAINER_RIGHT,
   DROP_Y,
   FPS_SAMPLE_WINDOW_MS,
+  PHYSICS_TIMESTEP_MS,
   STAGE_WIDTH,
 } from './constants';
 import { FRUITS } from './fruits';
+import { advanceOverflow } from './gameover';
 import { resolveMergeBatch, type MergeContact } from './merge';
 import type { FruitContact, FruitSnapshot, PhysicsWorld, Unsubscribe } from './physics';
 import type { Renderer } from './renderer';
@@ -85,11 +90,11 @@ export interface GameController extends Game {
   /** 果物どうしの衝突開始（物理側の `collisionStart` を果物だけに絞ったもの） */
   onFruitContact(handler: (contact: FruitContact) => void): Unsubscribe;
   /**
-   * イベントを発火する（#9 が自分の判定結果を通知するのに使う）。
+   * イベントを発火する（デバッグ・計測用の外部トリガ）。
    *
    * `gameover` を発火したときだけ副作用がある: 状態を `over` へ遷移させ（`statuschange` が先に飛ぶ）、
-   * ループを止める。ゲームオーバーの**判定**は #9 の責務、**状態機械の終了**は本モジュールの責務、
-   * という切り分けにするため（#9 に status を直接書かせない）。
+   * ループを止める。通常のゲームオーバーはループ内の判定（spec R-E）が同じ経路を通るため、
+   * ここから呼ぶのは「盤面を積まずに終了状態を再現したい」場合に限る。
    */
   emit<K extends keyof GameEvents>(event: K, payload: GameEvents[K]): void;
   /**
@@ -117,6 +122,11 @@ export interface GameController extends Game {
    * ループ停止中は最後に計測した値を保持する。計測前は 0。
    */
   readonly fps: number;
+  /**
+   * デッドライン超過の継続時間 (ms)（spec R-E の `overMs`）。デバッグ表示・テスト用。
+   * 超過している果物が 0 個のフレームで 0 に戻る。
+   */
+  readonly overMs: number;
   /** ループを止めて購読・物理世界を破棄する */
   dispose(): void;
 }
@@ -131,6 +141,14 @@ export interface GameDeps {
    * 保持している値（{@link GameController.nextTier}）とは別の名前にしている。
    */
   drawTier?: () => FruitTier;
+  /**
+   * 保存済みハイスコアの読み取り（既定は常に 0）。本番は `local-store` の `getHighScore` を渡す。
+   *
+   * `gameover` の payload（契約点 §7）の `highScore` / `isNewHighScore` を組むために使う。
+   * 読むのは `start` / `restart` の時点だけ（＝そのプレイ開始前の記録）。プレイ中に読むと、
+   * HUD が更新途中のハイスコアを保存済みにしてしまうため `isNewHighScore` が常に false になる。
+   */
+  readHighScore?: () => number;
   /** 次フレームの要求。既定は `requestAnimationFrame` */
   requestFrame?: (callback: (timestampMs: number) => void) => number;
   /** フレーム要求の取り消し。既定は `cancelAnimationFrame` */
@@ -170,12 +188,13 @@ export function clampDropX(x: number, radius: number): number {
  * ready --start--> playing <--pause/resume--> paused
  *                    |                          |
  *                    +---------restart----------+--> playing（スコア・果物をリセット）
- *                    +--emit('gameover')-------> over --restart--> playing
+ *                    +--超過が猶予を超える-----> over --restart--> playing
  * ```
  */
 export function createGame(deps: GameDeps): GameController {
   const { physics, renderer } = deps;
   const drawTier = deps.drawTier ?? ((): FruitTier => 0);
+  const readHighScore = deps.readHighScore ?? ((): number => 0);
   const requestFrame =
     deps.requestFrame ??
     ((callback: (timestampMs: number) => void) => requestAnimationFrame(callback));
@@ -205,6 +224,13 @@ export function createGame(deps: GameDeps): GameController {
   /** 直前フレームのタイムスタンプ。null なら次フレームを delta 0 として扱う */
   let lastFrameMs: number | null = null;
   let disposed = false;
+  /** デッドライン超過の継続時間 (ms)（spec R-E の `overMs`）。判定は gameover.ts */
+  let overMs = 0;
+  /**
+   * このプレイを始めた時点の保存済みハイスコア（`gameover` の `isNewHighScore` の基準）。
+   * `start` / `restart` で読み直す。
+   */
+  let highScoreBaseline = 0;
   /* フレームレートの実測（{@link GameController.fps}）。一定時間ごとに平均を取り直す */
   let fps = 0;
   let framesInWindow = 0;
@@ -273,7 +299,8 @@ export function createGame(deps: GameDeps): GameController {
       }
       if (merge.kind === 'promote') {
         // annihilate（スイカ同士）では新しい果物を作らない（tier 11 は存在しない）
-        physics.addFruit(merge.tier, merge.x, merge.y);
+        // 合体で生まれた果物は落下中ではない（spec R-E / E-12: 即座に超過判定の対象にする）
+        physics.addFruit(merge.tier, merge.x, merge.y, { landed: true });
       }
       emitEvent('merge', { tier: merge.tier, score: merge.score, x: merge.x, y: merge.y });
     }
@@ -288,13 +315,19 @@ export function createGame(deps: GameDeps): GameController {
     emitEvent('statuschange', { status: next });
   }
 
-  function draw(): void {
+  /**
+   * 現在の状態を 1 枚描く。
+   *
+   * @param fruits 既に取得済みのスナップショット（ループ内でゲームオーバー判定と共用する。
+   *   省略時は取り直す）。1 フレームに 2 回スナップショットを作らないための引数（NFR-01）
+   */
+  function draw(fruits: FruitSnapshot[] = physics.snapshot()): void {
     /*
      * ドロップ待機中の果物を DROP_Y に描くことで狙いを可視化する（FR-01）。
      * ゲームオーバー後は操作できないので消す。
      */
     const preview = status === 'over' ? undefined : { tier: currentTier, x: aimX, y: DROP_Y };
-    renderer.render({ fruits: physics.snapshot(), preview });
+    renderer.render({ fruits, preview });
   }
 
   /** 狙いを更新する。容器内へクランプするため、範囲外の値でも状態は壊れない */
@@ -344,12 +377,54 @@ export function createGame(deps: GameDeps): GameController {
     const deltaMs = lastFrameMs === null ? 0 : timestampMs - lastFrameMs;
     lastFrameMs = timestampMs;
 
-    physics.step(deltaMs);
+    const steps = physics.step(deltaMs);
     // 衝突コールバックの外（step の完了後）で盤面を変更する（R-D）
     applyMerges();
-    draw();
+
+    // 判定と描画で同じスナップショットを使う（1 フレームに 1 回だけ作る）
+    const fruits = physics.snapshot();
+    if (checkGameOver(fruits, steps)) {
+      // 状態は over（ループも停止済み）。最後の盤面を 1 枚描いて終わる
+      draw(fruits);
+      return;
+    }
+
+    draw(fruits);
     measureFps(timestampMs);
     scheduleFrame();
+  }
+
+  /**
+   * デッドライン超過を 1 フレーム分進め、確定したら `gameover` を発火する（FR-07 / spec R-E）。
+   *
+   * 経過時間には**実際に物理が進んだ時間**（`physics.step` が消化したステップ数 ×
+   * {@link PHYSICS_TIMESTEP_MS}）を使い、rAF の生の delta は使わない。タブ復帰直後の
+   * 巨大な delta（数十秒）をそのまま積むと、物理が 1 フレーム分しか進んでいないのに
+   * 猶予（`GAMEOVER_GRACE_MS`）を飛び越えて即終了になる（spec E-11 / R-6）。
+   *
+   * @param fruits このフレームの盤面（`DeadlineFruit` は `FruitSnapshot` の部分集合なので、
+   *   詰め替えずにそのまま渡せる）
+   * @param steps このフレームで実行された物理ステップ数
+   * @returns ゲームオーバーが確定したら `true`
+   */
+  function checkGameOver(fruits: readonly FruitSnapshot[], steps: number): boolean {
+    const result = advanceOverflow(overMs, fruits, steps * PHYSICS_TIMESTEP_MS);
+    overMs = result.overMs;
+    if (!result.isOver) {
+      return false;
+    }
+    emit('gameover', {
+      score,
+      highScore: Math.max(highScoreBaseline, score),
+      isNewHighScore: score > highScoreBaseline,
+    });
+    return true;
+  }
+
+  /** 保存済みハイスコアを読み直す。壊れた値は 0 として扱う（判定を止めない） */
+  function readBaselineHighScore(): number {
+    const value = readHighScore();
+    return Number.isFinite(value) && value > 0 ? value : 0;
   }
 
   function measureFps(timestampMs: number): void {
@@ -405,6 +480,8 @@ export function createGame(deps: GameDeps): GameController {
       if (status !== 'ready') {
         return;
       }
+      highScoreBaseline = readBaselineHighScore();
+      overMs = 0;
       setStatus('playing');
       renderer.resize();
       scheduleFrame();
@@ -444,6 +521,10 @@ export function createGame(deps: GameDeps): GameController {
       currentTier = drawTier();
       queuedTier = drawTier();
       aimX = clampDropX(STAGE_WIDTH / 2, radiusOf(currentTier));
+      // spec R-E: 超過継続時間も初期化する（前回の終了状態を持ち込まない）
+      overMs = 0;
+      // 前回のプレイ中に更新されたハイスコアを次の基準にする（FR-06）
+      highScoreBaseline = readBaselineHighScore();
       // ready を経由せず playing へ直行する（プレイヤーの操作なしで再開できる状態にする）
       setStatus('playing');
       renderer.resize();
@@ -505,6 +586,10 @@ export function createGame(deps: GameDeps): GameController {
 
     get fps() {
       return fps;
+    },
+
+    get overMs() {
+      return overMs;
     },
 
     dispose() {

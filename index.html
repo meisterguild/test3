@@ -29,6 +29,12 @@
         role="img"
         aria-label="ゲーム盤面"
       ></canvas>
+      <!--
+        ポーズ操作とゲームオーバーモーダルの差し込み先。
+        中身は src/ui/modal.ts が生成する（契約点 §9 の testid:
+        pause-toggle / gameover-modal / retry-button も同モジュールが付ける）。
+      -->
+      <section class="controls" data-testid="controls" aria-label="ゲーム操作"></section>
     </main>
     <script type="module" src="/src/main.ts"></script>
   </body>

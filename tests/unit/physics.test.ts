@@ -101,6 +101,43 @@ describe('createPhysicsWorld', () => {
     world.dispose();
   });
 
+  it('[R-E] 追加直後の果物は landed = false で、床に触れると landed = true になる', () => {
+    const world = createPhysicsWorld();
+    const fruit = world.addFruit(0, 240, DROP_Y);
+
+    expect(fruit.landed).toBe(false);
+    expect(world.snapshot()[0]?.landed).toBe(false);
+
+    advance(world, 3000);
+
+    // 落ちて床（果物ではない静的ボディ）に触れたので着地済み
+    expect(world.snapshot()[0]?.landed).toBe(true);
+    world.dispose();
+  });
+
+  it('[R-E / E-12] landed: true を指定した果物は最初から着地済み（合体で生成した果物）', () => {
+    const world = createPhysicsWorld();
+    const fruit = world.addFruit(0, 240, DROP_Y, { landed: true });
+
+    expect(fruit.landed).toBe(true);
+    expect(world.snapshot()[0]?.landed).toBe(true);
+    world.dispose();
+  });
+
+  it('[R-E] 果物どうしの接触でも landed = true になる', () => {
+    const world = createPhysicsWorld();
+    const radius = FRUITS[1]?.radius ?? 0;
+    world.addFruit(1, 240, CONTAINER_FLOOR_Y - radius - 5);
+    advance(world, 1000);
+    const falling = world.addFruit(1, 240, CONTAINER_FLOOR_Y - radius * 4);
+
+    expect(falling.landed).toBe(false);
+    advance(world, 2000);
+
+    expect(world.snapshot().every((snapshot) => snapshot.landed)).toBe(true);
+    world.dispose();
+  });
+
   it('果物どうしの衝突だけを onFruitContact に通知する（壁・床との衝突は通知しない）', () => {
     const world = createPhysicsWorld();
     const contacts: FruitContact[] = [];
