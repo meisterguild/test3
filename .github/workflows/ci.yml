@@ -1,4 +1,5 @@
-# スイカゲーム（メタ層のアプリ）の CI。lint / 型チェック / 単体テスト / E2E を PR ごとに回す。
+# スイカゲーム（メタ層のアプリ）の CI。
+# PR と既定ブランチ（develop）への push で lint / 型チェック / 単体テスト / E2E を回す。
 #
 # `template/` 配下（プロジェクトへコピーされるペイロード）は lint / テストの対象外なので、
 # 本ワークフローはメタ層のアプリと hook 回帰テストだけを見る。
@@ -12,12 +13,16 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [develop, main]
+    branches: [develop]
 
-# 同じブランチへ続けて push したときは古い実行を止める（E2E は実行時間が長い）
+# 同一 ref に後続 push が来たら古い実行は捨てる（デプロイと違い途中結果に価値がない。
+# E2E を含むぶん 1 実行が長いので効果が大きい）
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   app:
@@ -29,7 +34,8 @@ jobs:
 
       - uses: actions/setup-node@v5
         with:
-          # 下限は package.json の engines（>=22.12）。.npmrc の engine-strict が食い違いを弾く
+          # package.json の engines は >=22.12。.npmrc の engine-strict=true により
+          # これを下回ると npm ci 自体が失敗する。
           node-version: '22'
           cache: npm
 
@@ -38,8 +44,9 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      # 型チェック（tsc --noEmit）+ 本番ビルド。E2E も内部で build するが、
-      # 型エラーは webServer のログに埋もれるより先に単独で落としたい
+      # `npm run build` は `tsc --noEmit`（型チェック）→ `vite build` の順で走る。
+      # base はローカルと同じ既定値（`/`）のままでよい（公開用のビルドは pages.yml が行う）。
+      # E2E も内部で build するが、型エラーは webServer のログに埋もれるより先に単独で落としたい。
       - name: Build
         run: npm run build
 

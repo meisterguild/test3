@@ -44,6 +44,7 @@ cp -r /path/to/000-ai-template/template/. /path/to/your-project/
 ├── .claude/
 │   ├── settings.json                 # このリポジトリでの Claude Code 設定（push ゲートの配線）
 │   └── hooks/push-review-gate.sh     # ペイロード側の実体へ委譲するフォワーダ
+├── .github/workflows/                # 本リポジトリ自身の CI / Pages デプロイ（メタ層）
 ├── tests/                            # ペイロード側 hook の回帰テスト（メタ層）＋アプリのテスト
 ├── docs/                             # 本リポジトリで開発するアプリのプロジェクト文書（メタ）
 ├── index.html / package.json / tsconfig.json / vite.config.ts / playwright.config.ts / eslint.config.js
