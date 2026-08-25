@@ -314,7 +314,7 @@ E2E は 2 プロジェクトで走ります。`chromium`（1280×800 の PC 想�
 | ワークフロー | 起動条件 | 内容 |
 | ----------------------------- | -------------------------------------- | ------------------------------------------------------------------- |
 | `.github/workflows/ci.yml` | PR / `develop` への push | `npm ci` → `npm run lint` → `npm test` → `npm run build` |
-| `.github/workflows/pages.yml` | `develop` への push / 手動実行 | `npm run build` → `upload-pages-artifact` → `deploy-pages` |
+| `.github/workflows/pages.yml` | `develop` への push / 手動実行 | `configure-pages` → `npm run build` → 成果物検査 → `upload-pages-artifact` → `deploy-pages` |
 
 デプロイは `develop` への push で自動的に走ります（`workflow_dispatch` で手動再実行も可能）。サーバーサイド処理・外部 API 通信は持たないため（NFR-03）、`dist/` をそのまま静的配信するだけで動きます。
 
@@ -336,12 +336,22 @@ SUIKA_BASE=/test3 npm run build && SUIKA_BASE=/test3 npm run preview
 
 > `npm run test:e2e` はルート配信（`base` = `/`）前提です。`SUIKA_BASE` を設定したまま実行しないでください。
 
+#### 公開前の成果物検査
+
+`upload-pages-artifact` の直前で `dist/index.html` を検査し、次のどちらかに当たれば公開せずワークフローを落とします。
+
+- `/src/**` を参照している（＝ビルド前の `index.html` が混入している）
+- アセット参照が `base_path` 配下（`/test3/assets/` など）を向いていない（＝`base` の反映漏れ）
+
+ブラウザで開くまで気づけない種類の破損なので、配信前に止めます。
+
 #### 初回に必要な手動設定
 
-ワークフローだけでは完結しません。リポジトリ設定で以下を行う必要があります。
+Pages の有効化と「GitHub Actions ビルド」への切り替えは `actions/configure-pages` の `enablement: true` が API 経由で行うため、**Settings → Pages の事前操作は不要**です。
 
-1. **Settings → Pages → Build and deployment → Source を "GitHub Actions" にする**（未設定だと `actions/configure-pages` が失敗します）
-2. **リポジトリを Public にする**、または GitHub Enterprise Cloud のプランで Pages のアクセス制御を設定する（Private リポジトリの Pages は Enterprise Cloud 限定のため、現状のままでは公開されません）
+残る前提は 1 つだけです。
+
+- **リポジトリを Public にする**、または GitHub Enterprise Cloud のプランで Pages のアクセス制御を設定する（Private リポジトリの Pages は Enterprise Cloud 限定のため、現状のままでは公開されません）
 
 ### デバッグ用クエリパラメータ
 

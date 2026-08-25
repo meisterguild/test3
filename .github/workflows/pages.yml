@@ -1,6 +1,6 @@
 # スイカゲームを GitHub Pages へ静的公開する（NFR-03）。
-# 前提: リポジトリ設定 Settings → Pages → Build and deployment → Source を
-#       "GitHub Actions" にしておくこと（未設定だと configure-pages / deploy-pages が失敗する）。
+# Pages の有効化と「GitHub Actions ビルド」への切り替えはこのワークフロー自身が行う
+# （configure-pages の `enablement: true`）。リポジトリ設定の事前操作は不要。
 name: Deploy to GitHub Pages
 
 on:
@@ -32,6 +32,14 @@ jobs:
       # リポジトリ名をワークフローへ直書きせずに済むので、リネームしても壊れない。
       - id: pages
         uses: actions/configure-pages@v5
+        with:
+          # Pages 未有効 / ブランチ配信のままだと、この action は
+          # "Get Pages site failed" で落ち、以降の build / deploy が丸ごと skip される。
+          # その状態でも Pages 自体は develop の中身を素で配ってしまうため、
+          # 「ビルド前の index.html が公開され `/src/main.ts` が 404」になる（Issue #27）。
+          # enablement: true なら API 経由で Pages を有効化し、ビルド元を
+          # GitHub Actions へ切り替えるので、リポジトリ設定の手作業に依存しない。
+          enablement: true
 
       - uses: actions/setup-node@v4
         with:
@@ -46,6 +54,33 @@ jobs:
           # vite.config.ts の normalizeBase() が `/test3` → `/test3/` に正規化する。
           # ここが空 / 誤りだと公開 URL 上で JS・CSS・音源が 404 になる。
           SUIKA_BASE: ${{ steps.pages.outputs.base_path }}
+
+      # Issue #27 の失敗は「公開してからブラウザで初めて気づく」種類のもの。
+      # 配る前に成果物の参照先を検査して、壊れたものを Pages へ載せない。
+      - name: verify (成果物の参照先が公開先のサブパスを向いているか)
+        env:
+          BASE_PATH: ${{ steps.pages.outputs.base_path }}
+        run: |
+          set -euo pipefail
+          html=dist/index.html
+          if [ ! -f "$html" ]; then
+            echo "::error::$html が生成されていない"
+            exit 1
+          fi
+          # ビルド前の index.html が紛れ込むと `/src/**` を参照したまま公開される
+          if grep -q '/src/' "$html"; then
+            echo "::error::$html がソース（/src/**）を参照している。ビルド済みの成果物ではない"
+            exit 1
+          fi
+          # base_path は `/test3`（プロジェクトサイト）か空文字（ユーザ / Org サイト）。
+          # 後者では base が `/` なので、期待する接頭辞は `/assets/` になる。
+          expected="${BASE_PATH%/}/assets/"
+          if ! grep -q "\"${expected}" "$html"; then
+            echo "::error::$html のアセット参照が ${expected} で始まっていない（base の反映漏れ）"
+            grep -oE '(src|href)="[^"]*"' "$html" || true
+            exit 1
+          fi
+          echo "OK: アセット参照は ${expected} 配下"
 
       - uses: actions/upload-pages-artifact@v3
         with:
