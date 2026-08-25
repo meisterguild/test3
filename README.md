@@ -35,6 +35,7 @@
 ├── .claude/
 │   ├── settings.json                 # このリポジトリでの Claude Code 設定（push ゲートの配線）
 │   └── hooks/push-review-gate.sh     # template/ 側の実体へ委譲するフォワーダ
+├── .github/workflows/                # このリポジトリ自身の CI / GitHub Pages デプロイ（メタ層）
 ├── tests/                            # テンプレート層の hook のテスト（メタ層）
 ├── docs/                             # このリポジトリで開発するスイカゲームのプロジェクト文書（メタ層）
 └── template/                         # ← プロジェクトへコピーする本体
@@ -306,6 +307,42 @@ E2E は 2 プロジェクトで走ります。`chromium`（1280×800 の PC 想�
 
 `npm run test:e2e` は毎回ビルドし直した `dist/` を preview 経由で検証します（既存サーバは再利用しません）。`npm run preview` を起動したままだとポート 4173 が衝突するので、先に止めてください。
 
+### CI とデプロイ（GitHub Pages）
+
+公開 URL: **https://meisterguild.github.io/test3/**
+
+| ワークフロー | 起動条件 | 内容 |
+| ----------------------------- | -------------------------------------- | ------------------------------------------------------------------- |
+| `.github/workflows/ci.yml` | PR / `develop` への push | `npm ci` → `npm run lint` → `npm test` → `npm run build` |
+| `.github/workflows/pages.yml` | `develop` への push / 手動実行 | `npm run build` → `upload-pages-artifact` → `deploy-pages` |
+
+デプロイは `develop` への push で自動的に走ります（`workflow_dispatch` で手動再実行も可能）。サーバーサイド処理・外部 API 通信は持たないため（NFR-03）、`dist/` をそのまま静的配信するだけで動きます。
+
+#### 公開先のサブパス（`base`）
+
+GitHub Pages のプロジェクトサイトは `https://<owner>.github.io/<repo>/` 配下に配られるため、Vite の `base` を `/test3/` に合わせないとアセットが 404 になります。切り替えは環境変数で行います。
+
+| 環境 | `SUIKA_BASE` | 実際の `base` |
+| --------------------------------- | -------------------------- | ------------- |
+| ローカル（`dev` / `preview` / E2E） | 未設定 | `/` |
+| GitHub Pages | `actions/configure-pages` の `base_path`（`/test3`） | `/test3/` |
+
+正規化は `vite.config.ts` の `normalizeBase()` が行い（末尾スラッシュの有無・空文字を吸収）、その挙動は `tests/unit/vite-base.test.ts` で固定しています。公開時と同じ配置をローカルで確認するには次のようにします。
+
+```bash
+SUIKA_BASE=/test3 npm run build && SUIKA_BASE=/test3 npm run preview
+# http://localhost:4173/test3/ を開く
+```
+
+> `npm run test:e2e` はルート配信（`base` = `/`）前提です。`SUIKA_BASE` を設定したまま実行しないでください。
+
+#### 初回に必要な手動設定
+
+ワークフローだけでは完結しません。リポジトリ設定で以下を行う必要があります。
+
+1. **Settings → Pages → Build and deployment → Source を "GitHub Actions" にする**（未設定だと `actions/configure-pages` が失敗します）
+2. **リポジトリを Public にする**、または GitHub Enterprise Cloud のプランで Pages のアクセス制御を設定する（Private リポジトリの Pages は Enterprise Cloud 限定のため、現状のままでは公開されません）
+
 ### デバッグ用クエリパラメータ
 
 盤面の挙動と負荷を手元で確認するための口を URL に持たせています（本番ビルドにも含まれますが、パラメータが無ければ何も起きません）。
@@ -363,6 +400,9 @@ npm run build && npm run preview
 
 ```text
 000-ai-template/
+├── .github/workflows/
+│   ├── ci.yml                  # lint / 単体テスト / build（PR・develop への push）
+│   └── pages.yml               # GitHub Pages への静的デプロイ（develop への push）
 ├── index.html                  # エントリ HTML（canvas を配置）
 ├── package.json
 ├── tsconfig.json

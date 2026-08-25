@@ -1,0 +1,63 @@
+# スイカゲームを GitHub Pages へ静的公開する（NFR-03）。
+# 前提: リポジトリ設定 Settings → Pages → Build and deployment → Source を
+#       "GitHub Actions" にしておくこと（未設定だと configure-pages / deploy-pages が失敗する）。
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [develop]
+  # 設定変更後の再デプロイや、コード変更なしでの公開やり直しに使う
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  # deploy-pages が OIDC でデプロイトークンを取得するのに必要
+  id-token: write
+
+# デプロイは 1 本ずつ直列に流す。走行中の実行はキャンセルしない
+# （公開の途中で打ち切ると Pages が中途半端な状態で残りうるため）。
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # base_path（プロジェクトサイトなら `/<repo>`、ユーザ / Org サイトなら空文字）を得る。
+      # リポジトリ名をワークフローへ直書きせずに済むので、リネームしても壊れない。
+      - id: pages
+        uses: actions/configure-pages@v5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      - name: build (公開先のサブパスを base に反映)
+        run: npm run build
+        env:
+          # vite.config.ts の normalizeBase() が `/test3` → `/test3/` に正規化する。
+          # ここが空 / 誤りだと公開 URL 上で JS・CSS・音源が 404 になる。
+          SUIKA_BASE: ${{ steps.pages.outputs.base_path }}
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    name: deploy
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
