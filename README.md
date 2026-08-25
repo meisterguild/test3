@@ -296,10 +296,10 @@ npx playwright install --with-deps chromium
 | `npm test` | 単体テスト（Vitest / `tests/unit/**/*.test.ts`） |
 | `npm run test:watch` | 単体テストの watch 実行 |
 | `npm run test:e2e` | E2E テスト（Playwright / `tests/e2e/**/*.spec.ts`。build 実行後に preview を自動起動） |
-
-E2E は 2 プロジェクトで走ります。`chromium`（1280×800 の PC 想定）が全 spec を、`mobile-portrait`（375×667・DPR 2・タッチ有効のスマホ縦持ち想定）が `responsive.spec.ts` だけを対象にします（ホバー前提の操作を含む spec はタッチ環境では成立しないため）。`--project=mobile-portrait` で片方だけ実行できます。
 | `npm run lint` | ESLint（`template/` 配下は対象外） |
 | `npm run format` | Prettier で整形（`template/` 配下・Markdown は対象外） |
+
+E2E は 2 プロジェクトで走ります。`chromium`（1280×800 の PC 想定）が全 spec を、`mobile-portrait`（375×667・DPR 2・タッチ有効のスマホ縦持ち想定）が `responsive.spec.ts` だけを対象にします（ホバー前提の操作を含む spec はタッチ環境では成立しないため）。`--project=mobile-portrait` で片方だけ実行できます。
 
 単体テストの既定環境は `node` です。DOM が必要なテストだけ、ファイル先頭に `// @vitest-environment jsdom` を書いて切り替えます。
 
@@ -313,7 +313,8 @@ E2E は 2 プロジェクトで走ります。`chromium`（1280×800 の PC 想�
 
 | ワークフロー | 起動条件 | 内容 |
 | ----------------------------- | -------------------------------------- | ------------------------------------------------------------------- |
-| `.github/workflows/ci.yml` | PR / `develop` への push | `npm ci` → `npm run lint` → `npm test` → `npm run build` |
+| `.github/workflows/ci.yml`（`app` job） | PR / `develop` への push | `npm ci` → `npm run lint` → `npm run build` → `npm test` → `npm run test:e2e` |
+| `.github/workflows/ci.yml`（`hooks` job） | 同上 | `python3 -m unittest discover -s tests`（push レビューゲートの回帰テスト） |
 | `.github/workflows/pages.yml` | `develop` への push / 手動実行 | `configure-pages` → `npm run build` → 成果物検査 → `upload-pages-artifact` → `deploy-pages` |
 
 デプロイは `develop` への push で自動的に走ります（`workflow_dispatch` で手動再実行も可能）。サーバーサイド処理・外部 API 通信は持たないため（NFR-03）、`dist/` をそのまま静的配信するだけで動きます。
@@ -362,6 +363,7 @@ Pages の有効化と「GitHub Actions ビルド」への切り替えは `action
 | `stress` | `?stress=60` | 指定個数の果物を連続投入する（フレームレート計測用。投入間隔は既定 500ms＝実プレイのクールダウン） |
 | `interval` | `?interval=120` | `stress` の投入間隔 (ms) を上書きする（最小 16ms）。クールダウンより短くすると落下中の果物が空中で触れ合い、盤面が埋まる前にゲームオーバー判定へ到達する |
 | `fps` | `?fps=1` | 実測 fps / 果物数 / sleeping 数を画面下部に表示する（`stress` 指定時は自動で有効） |
+| `testapi` | `?testapi=1` | E2E 用のテストフック（`window.__suikaTestApi`）を公開する。盤面の観測（状態 / スコア / 果物一覧）と組み立て（任意 tier のドロップ・着地済みの直接配置・全消去）ができる。実体は `src/debug/test-api.ts` |
 
 フレームレート（NFR-01: 果物 60 個で 30fps を下回らない）の計測手順:
 
@@ -411,7 +413,7 @@ npm run build && npm run preview
 ```text
 000-ai-template/
 ├── .github/workflows/
-│   ├── ci.yml                  # lint / 単体テスト / build（PR・develop への push）
+│   ├── ci.yml                  # CI（lint / build / 単体テスト / E2E / hook 回帰テスト）
 │   └── pages.yml               # GitHub Pages への静的デプロイ（develop への push）
 ├── index.html                  # エントリ HTML（canvas を配置）
 ├── package.json
@@ -428,12 +430,15 @@ npm run build && npm run preview
 │   ├── game/                   # ルール・物理・描画・ゲームループ
 │   ├── ui/                     # HUD・モーダル
 │   ├── storage/                # localStorage の隠蔽
-│   └── audio/                  # 効果音
+│   ├── audio/                  # 効果音
+│   └── debug/                  # URL で有効化するデバッグ足場（E2E 用テストフック）
 └── tests/
     ├── unit/                   # Vitest
     ├── e2e/                    # Playwright（`support/` は spec 共有の観測ヘルパ）
     └── test_review_runner_diff_range.py  # テンプレート層 hook の回帰テスト（別系統）
 ```
+
+E2E は受け入れ条件 ID（`AC-01`〜`AC-06`）をテスト名の先頭に入れています。AC の定義は `docs/specs/game-core-rules.md`、AC ↔ テストの対応表は `docs/deliverables/test-scenarios/suika-game-e2e.md` です。CI（GitHub Actions）は PR と `develop` への push で lint / 型チェック / 単体テスト / E2E を実行します（`.github/workflows/ci.yml` の `app` job）。
 
 > ※ `tests/` は Python の hook 回帰テスト（メタ層の保守用）とアプリのテストが同居します。実行系は別で、Python 側は `python3 -m unittest discover -s tests`、アプリ側は `npm test` / `npm run test:e2e` です（Vitest / Playwright の対象は `tests/unit` / `tests/e2e` に限定してあります）。
 

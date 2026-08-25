@@ -1,6 +1,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 
 import { logicalToClientX, measureFruitBand } from './support/canvas-probe';
+import { openWithTestApi, readFruits } from './support/test-api';
 
 /**
  * レスポンシブ / タッチ最適化（T-10 / UI-03 / R-04）の E2E。
@@ -277,6 +278,64 @@ test('[R-04] 画面回転・リサイズの後も描画がぼやけず、入力�
     expect(band.pixels).toBeGreaterThan(0);
     expect(band.centerX ?? -1).toBeLessThan(logicalX + aimTolerance);
   }
+});
+
+/** AC-06 が指定する viewport（iPhone SE 相当の縦持ち。UI-03） */
+const AC06_VIEWPORT = { width: 375, height: 667 };
+
+test('[AC-06] 375×667 の viewport でプレイエリア全体が収まりタッチでプレイできる', async ({
+  page,
+  hasTouch,
+}) => {
+  /*
+   * `mobile-portrait` プロジェクトでは既にこのサイズだが、`chromium`（PC 想定）でも
+   * AC を検証したいので明示的に合わせる。タッチの有無だけプロジェクト差として分岐する
+   * （AC の「タッチでプレイできる」は hasTouch = true の側で実際のタッチ経路を踏む）。
+   */
+  await page.setViewportSize(AC06_VIEWPORT);
+  await openWithTestApi(page);
+
+  const canvas = page.getByTestId('game-canvas');
+  await expect(canvas).toBeVisible();
+  await expect(page.getByTestId('hud')).toBeVisible();
+  await expect(page.getByTestId('controls')).toBeVisible();
+
+  // 実解像度の反映（ResizeObserver → 次フレーム）を待ってから寸法を見る
+  await expect
+    .poll(async () => {
+      const geometry = await readCanvasGeometry(canvas);
+      return geometry.width === expectedResolution(geometry).width;
+    })
+    .toBe(true);
+  expectCrisp(await readCanvasGeometry(canvas));
+
+  // スクロールなしで 1 画面に収まる
+  const layout = await readViewportGeometry(page);
+  expect(layout.scrollHeight).toBeLessThanOrEqual(layout.clientHeight + PIXEL_TOLERANCE);
+  expect(layout.scrollWidth).toBeLessThanOrEqual(layout.clientWidth + PIXEL_TOLERANCE);
+
+  // プレイエリア全体がビューポートの内側にある
+  const box = await canvas.boundingBox();
+  expect(box).not.toBeNull();
+  if (box === null) {
+    return;
+  }
+  expect(box.y).toBeGreaterThanOrEqual(-PIXEL_TOLERANCE);
+  expect(box.y + box.height).toBeLessThanOrEqual(AC06_VIEWPORT.height + PIXEL_TOLERANCE);
+  expect(box.x).toBeGreaterThanOrEqual(-PIXEL_TOLERANCE);
+  expect(box.x + box.width).toBeLessThanOrEqual(AC06_VIEWPORT.width + PIXEL_TOLERANCE);
+
+  // タッチで果物が落ちる（タッチ非対応のプロジェクトではポインタ操作で同じ経路を踏む）
+  const tapX = box.x + box.width / 2;
+  const tapY = box.y + box.height / 2;
+  if (hasTouch) {
+    await page.touchscreen.tap(tapX, tapY);
+  } else {
+    await page.mouse.click(tapX, tapY);
+  }
+  await expect
+    .poll(async () => (await readFruits(page)).length, { message: '果物が落ちていない' })
+    .toBeGreaterThan(0);
 });
 
 test('[UI-03] タッチ操作でページがスクロール / 引っ張り更新されない', async ({ page }) => {

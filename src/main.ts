@@ -8,10 +8,11 @@
  */
 
 import { createSfx } from './audio/sfx';
+import { installTestApi, TEST_API_QUERY_KEY } from './debug/test-api';
 import { CONTAINER_LEFT, CONTAINER_RIGHT, DROP_COOLDOWN_MS } from './game/constants';
 import { createGame, type GameController } from './game/game';
 import { createInput } from './game/input';
-import { createPhysicsWorld } from './game/physics';
+import { createPhysicsWorld, type PhysicsWorld } from './game/physics';
 import { createRenderer } from './game/renderer';
 import { drawFruitTier } from './game/spawn';
 import { createLocalStore } from './storage/local-store';
@@ -238,8 +239,9 @@ function resolveStressInterval(raw: string | null): number {
  * - `?stress=<個数>` … 指定個数を連続投入する（計測表示も自動で有効化）
  * - `?interval=<ms>` … `?stress=` の投入間隔を上書きする（既定は実プレイのクールダウン）
  * - `?fps=1` … 実測 fps / 果物数 / sleeping 数を表示する
+ * - `?testapi=1` … E2E 用のテストフック（`window.__suikaTestApi`）を公開する（#12）
  */
-function startDebugTools(game: GameController): void {
+function startDebugTools(game: GameController, physics: PhysicsWorld): void {
   const params = new URLSearchParams(window.location.search);
 
   const stress = Number.parseInt(params.get('stress') ?? '', 10);
@@ -248,6 +250,10 @@ function startDebugTools(game: GameController): void {
   }
   if (params.get('stress') !== null || params.get('fps') === '1') {
     startDebugStats(game);
+  }
+  // 盤面を直接組み立てる口。付いていなければ何も公開しない（既定は無効）
+  if (params.get(TEST_API_QUERY_KEY) === '1') {
+    installTestApi({ game, physics });
   }
 }
 
@@ -263,8 +269,10 @@ function bootstrap(): void {
   try {
     const canvas = requireCanvas();
     const store = createLocalStore();
+    // テストフック（`?testapi=1`）が盤面を直接組み立てるため、物理世界の参照を保持する
+    const physics = createPhysicsWorld();
     const game = createGame({
-      physics: createPhysicsWorld(),
+      physics,
       renderer: createRenderer(canvas),
       drawTier: drawFruitTier,
       // gameover の payload（ハイスコア更新の有無）に保存済みの記録を使う（FR-06 / UI-02）
@@ -285,7 +293,7 @@ function bootstrap(): void {
     // 落下操作（FR-01 / FR-10）。ページ全体で遊べるようキー入力は window で受ける
     createInput(canvas, game);
     game.start();
-    startDebugTools(game);
+    startDebugTools(game, physics);
   } catch (error) {
     console.error('ゲームの初期化に失敗しました', error);
     showBootError();

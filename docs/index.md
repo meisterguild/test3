@@ -17,12 +17,17 @@
 | [tasks/issue-plan.md](./internal/tasks/issue-plan.md) | 作業計画（タスク分解・依存グラフ・カバレッジ表・起票結果） |
 | [tasks/backlog.md](./internal/tasks/backlog.md) | タスク台帳（issue 番号と状態） |
 
-## 未作成（実装 issue で作られる）
+## specs/ の一覧
 
-| パス | 作成する issue |
+| ドキュメント | 内容 |
 | --- | --- |
-| `docs/specs/game-core-rules.md` | [#3](https://github.com/meisterguild/test3/issues/3) ゲームコアルールの仕様策定 |
-| `docs/deliverables/test-scenarios/` | [#12](https://github.com/meisterguild/test3/issues/12) E2E テストシナリオの整備 |
+| [specs/game-core-rules.md](./specs/game-core-rules.md) | ゲームコアルールの仕様（果物・合体・スコア・出現抽選・ゲームオーバー／受け入れ条件 AC-01〜AC-06 の定義） |
+
+## deliverables/ の一覧
+
+| ドキュメント | 内容 |
+| --- | --- |
+| [deliverables/test-scenarios/suika-game-e2e.md](./deliverables/test-scenarios/suika-game-e2e.md) | E2E シナリオ対応表（AC ID ↔ テストファイル / テスト名） |
 
 ## 読む順番
 
