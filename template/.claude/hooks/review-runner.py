@@ -255,35 +255,45 @@ def _detect_fork_point_ref(current_branch: str | None) -> str | None:
 
     候補は `refs/remotes/origin` 配下の全ブランチから次を除いたもの。
 
-      - `origin/HEAD`（既定ブランチへのシンボリック ref。実体側が候補に入るので重複）
-      - `origin/<current_branch>`（自分の remote ref。`diff_range()` の 2 が扱う）
+      - `refs/remotes/origin/HEAD`（既定ブランチへのシンボリック ref。実体側が候補に
+        入るので重複）
+      - `refs/remotes/origin/<current_branch>`（自分の remote ref。`diff_range()` の 2 が扱う）
       - `origin/<type>/<N>-<slug>` 形式の作業ブランチ
 
     作業ブランチを除くのは、兄弟の作業ブランチが自分の枝から派生していた場合に
     merge-base が自分のコミットの内側へ入り、**自分の変更がレビュー対象から漏れる**
     のを防ぐため。
 
+    除外判定は短縮名ではなく完全な refname で行う。`%(refname:short)` が
+    `refs/remotes/origin/HEAD` をどう縮めるかは git のバージョンで変わり
+    （2.39 は `origin/HEAD`、2.55 は `origin`）、短縮名で突き合わせると新しい git で
+    除外が外れてシンボリック ref が分岐元に選ばれてしまう。
+
     候補ごとに `git merge-base <ref> HEAD` を求め、`<merge-base>..HEAD` のコミット数が
     最小のものを採る（＝分岐点が最も新しい＝直近の分岐元）。同数の候補があれば
     `git for-each-ref` の出力順（refname 昇順）で先に来たものを採り、結果を安定させる。
     """
     refs = subprocess.run(
-        ["git", "for-each-ref", "--format=%(refname:short)", "refs/remotes/origin"],
+        ["git", "for-each-ref", "--format=%(refname)%09%(refname:short)",
+         "refs/remotes/origin"],
         capture_output=True, text=True
     )
     if refs.returncode != 0:
         return None
 
-    excluded = {"origin/HEAD"}
+    excluded = {"refs/remotes/origin/HEAD"}
     if current_branch:
-        excluded.add(f"origin/{current_branch}")
+        excluded.add(f"refs/remotes/origin/{current_branch}")
 
     best_ref: str | None = None
     best_count: int | None = None
-    for ref in refs.stdout.splitlines():
-        ref = ref.strip()
+    for line in refs.stdout.splitlines():
+        full_ref, _, ref = line.partition("\t")
+        full_ref, ref = full_ref.strip(), ref.strip()
+        if not full_ref or full_ref in excluded:
+            continue
         # `-` 始まりは git の引数として options と誤認されるため弾く（1・2 と同じ理由）
-        if not ref or ref.startswith("-") or ref in excluded:
+        if not ref or ref.startswith("-"):
             continue
         if _WORK_BRANCH_REF_RE.match(ref):
             continue

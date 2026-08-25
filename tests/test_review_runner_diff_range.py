@@ -29,6 +29,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RUNNER_PATH = REPO_ROOT / "template" / ".claude" / "hooks" / "review-runner.py"
@@ -224,7 +225,15 @@ class ForkPointDetectionTest(DiffRangeTestBase):
         self.assertEqual(self.diff_range(), "origin/epic-317...HEAD", msg=self.env)
 
     def test_default_branch_first_push_is_unchanged(self) -> None:
-        """受け入れ条件 2: 既定ブランチから切った通常の枝は従来と同じ範囲（回帰なし）。"""
+        """受け入れ条件 2: 既定ブランチから切った通常の枝は従来と同じ範囲（回帰なし）。
+
+        origin/HEAD が分岐元の候補から確実に外れることも同時に固定する。候補は
+        `origin/HEAD`（→ develop）と `origin/develop` の 2 つでコミット数が必ず並び、
+        refname 昇順のタイブレークでは `refs/remotes/origin/HEAD` が先に来る。
+        除外を短縮名（`origin/HEAD`）で突き合わせていると、`%(refname:short)` が
+        `origin` を返す git（2.55 で確認。2.39 は `origin/HEAD`）でシンボリック ref が
+        分岐元に選ばれ、範囲が `origin...HEAD` になる。
+        """
         self.build_develop()
         self.new_branch("fix/34-plain")
         self.commit("work-1.txt")
@@ -294,6 +303,51 @@ class ForkPointDetectionTest(DiffRangeTestBase):
         git("branch", "--set-upstream-to=origin/develop", cwd=self.work)
 
         self.assertEqual(self.diff_range(), "origin/develop..HEAD", msg=self.env)
+
+
+class RefShorteningCompatTest(DiffRangeTestBase):
+    """`%(refname:short)` の縮め方が git のバージョンで変わっても壊れないことを固定する。
+
+    `refs/remotes/origin/HEAD` の短縮名は git 2.39 では `origin/HEAD` だが、2.55 では
+    `origin` になる。ローカルの git がどちらであっても両方の経路を検証できるように、
+    `for-each-ref` の出力だけを差し替えて `diff_range()` を呼ぶ。
+    """
+
+    def _run_with_short_head_ref(self, short_name: str) -> str | None:
+        """`refs/remotes/origin/HEAD` の短縮名を `short_name` に固定して diff_range()。"""
+        real_run = subprocess.run
+
+        def fake_run(args, **kwargs):
+            result = real_run(args, **kwargs)
+            if len(args) > 1 and args[1] == "for-each-ref" and result.returncode == 0:
+                result.stdout = "".join(
+                    f"{full}\t{short_name}\n" if full == "refs/remotes/origin/HEAD"
+                    else f"{line}\n"
+                    for line in result.stdout.splitlines()
+                    for full in (line.partition("\t")[0],)
+                )
+            return result
+
+        with mock.patch.object(runner.subprocess, "run", fake_run):
+            return self.diff_range()
+
+    def test_origin_head_is_excluded_regardless_of_short_name(self) -> None:
+        """origin/HEAD はどちらの短縮名でも分岐元に選ばれない（実体の origin/develop を採る）。
+
+        除外を短縮名で突き合わせていると `origin` を返す git で除外が外れ、
+        コミット数が並ぶ refname 昇順のタイブレークでシンボリック ref が勝ってしまう。
+        """
+        self.build_develop()
+        self.new_branch("fix/40-short-name")
+        self.commit("work-1.txt")
+
+        for short_name in ("origin/HEAD", "origin"):
+            with self.subTest(short_name=short_name):
+                self.assertEqual(
+                    self._run_with_short_head_ref(short_name),
+                    "origin/develop...HEAD",
+                    msg=self.env,
+                )
 
 
 class FallbackTest(DiffRangeTestBase):
