@@ -315,7 +315,7 @@ E2E は 2 プロジェクトで走ります。`chromium`（1280×800 の PC 想�
 | ----------------------------- | -------------------------------------- | ------------------------------------------------------------------- |
 | `.github/workflows/ci.yml`（`app` job） | PR / `develop` への push | `npm ci` → `npm run lint` → `npm run build` → `npm test` → `npm run test:e2e` |
 | `.github/workflows/ci.yml`（`hooks` job） | 同上 | `python3 -m unittest discover -s tests`（push レビューゲートの回帰テスト） |
-| `.github/workflows/pages.yml` | `develop` への push / 手動実行 | `npm run build` → `upload-pages-artifact` → `deploy-pages` |
+| `.github/workflows/pages.yml` | `develop` への push / 手動実行 | `configure-pages` → `npm run build` → 成果物検査 → `upload-pages-artifact` → `deploy-pages` |
 
 デプロイは `develop` への push で自動的に走ります（`workflow_dispatch` で手動再実行も可能）。サーバーサイド処理・外部 API 通信は持たないため（NFR-03）、`dist/` をそのまま静的配信するだけで動きます。
 
@@ -337,12 +337,22 @@ SUIKA_BASE=/test3 npm run build && SUIKA_BASE=/test3 npm run preview
 
 > `npm run test:e2e` はルート配信（`base` = `/`）前提です。`SUIKA_BASE` を設定したまま実行しないでください。
 
+#### 公開前の成果物検査
+
+`upload-pages-artifact` の直前で `dist/index.html` を検査し、次のどちらかに当たれば公開せずワークフローを落とします。
+
+- `/src/**` を参照している（＝ビルド前の `index.html` が混入している）
+- アセット参照が `base_path` 配下（`/test3/assets/` など）を向いていない（＝`base` の反映漏れ）
+
+ブラウザで開くまで気づけない種類の破損なので、配信前に止めます。
+
 #### 初回に必要な手動設定
 
-ワークフローだけでは完結しません。リポジトリ設定で以下を行う必要があります。
+Pages の有効化と「GitHub Actions ビルド」への切り替えは `actions/configure-pages` の `enablement: true` が API 経由で行うため、**Settings → Pages の事前操作は不要**です。
 
-1. **Settings → Pages → Build and deployment → Source を "GitHub Actions" にする**（未設定だと `actions/configure-pages` が失敗します）
-2. **リポジトリを Public にする**、または GitHub Enterprise Cloud のプランで Pages のアクセス制御を設定する（Private リポジトリの Pages は Enterprise Cloud 限定のため、現状のままでは公開されません）
+残る前提は 1 つだけです。
+
+- **リポジトリを Public にする**、または GitHub Enterprise Cloud のプランで Pages のアクセス制御を設定する（Private リポジトリの Pages は Enterprise Cloud 限定のため、現状のままでは公開されません）
 
 ### デバッグ用クエリパラメータ
 
@@ -428,7 +438,7 @@ npm run build && npm run preview
     └── test_review_runner_diff_range.py  # テンプレート層 hook の回帰テスト（別系統）
 ```
 
-E2E は受け入れ条件 ID（`AC-01`〜`AC-06`）をテスト名の先頭に入れています。AC の定義は `docs/specs/game-core-rules.md`、AC ↔ テストの対応表は `docs/deliverables/test-scenarios/suika-game-e2e.md` です。CI（GitHub Actions）は PR と `develop` / `main` への push で lint / 型チェック / 単体テスト / E2E を実行します。
+E2E は受け入れ条件 ID（`AC-01`〜`AC-06`）をテスト名の先頭に入れています。AC の定義は `docs/specs/game-core-rules.md`、AC ↔ テストの対応表は `docs/deliverables/test-scenarios/suika-game-e2e.md` です。CI（GitHub Actions）は PR と `develop` への push で lint / 型チェック / 単体テスト / E2E を実行します（`.github/workflows/ci.yml` の `app` job）。
 
 > ※ `tests/` は Python の hook 回帰テスト（メタ層の保守用）とアプリのテストが同居します。実行系は別で、Python 側は `python3 -m unittest discover -s tests`、アプリ側は `npm test` / `npm run test:e2e` です（Vitest / Playwright の対象は `tests/unit` / `tests/e2e` に限定してあります）。
 
